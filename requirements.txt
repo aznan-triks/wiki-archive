@@ -1,0 +1,10 @@
+wikiteam3
+mwparserfromhell
+weasyprint
+pikepdf
+beautifulsoup4
+markdownify
+requests
+psutil
+fastapi
+uvicorn[standard]

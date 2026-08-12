@@ -1,0 +1,14 @@
+services:
+  wiki-archive:
+    build: .
+    volumes:
+      - ./data:/data
+      - ./scripts:/scripts:ro
+      - ./server.py:/app/server.py:ro
+    environment:
+      # Optional: absolute path to the project on the host. If set (in .env),
+      # the interface shows the full path to the export folder, ready to
+      # paste into Explorer. Leave empty for a relative path.
+      HOST_PROJECT_DIR: "${HOST_PROJECT_DIR:-}"
+    ports:
+      - "8080:8080"

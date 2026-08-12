@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "━━━ [1/4] WIKI DUMP ━━━"
+wikiteam3dumpgenerator \
+  --api "${WIKI_API}" \
+  --xml --images \
+  --delay 1 --retries 5 \
+  --path /data/dump
+
+echo "━━━ [2/4] HTML EXTRACTION ━━━"
+python3 /scripts/extract.py /data/dump/wiki.xml /data/html
+
+echo "━━━ [3/4] PDF CONVERSION ━━━"
+mkdir -p /data/pdf
+for f in /data/html/*.html; do
+    base=$(basename "$f" .html)
+    python3 -c "
+from weasyprint import HTML
+HTML(filename='$f').write_pdf('/data/pdf/${base}.pdf')
+print('  ✓ ${base}')
+"
+done
+
+echo "━━━ [4/4] MERGING FOR NOTEBOOKLM ━━━"
+bash /scripts/flatten.sh /data/pdf /data/flat .pdf
+python3 /scripts/merge_pdf.py /data/flat /data/merged 100
+
+echo ""
+echo "✓ DONE -- files in ./data/merged/"
+ls -lh /data/merged/*.pdf 2>/dev/null | awk '{print "  "$5, $9}' || echo "  (no PDF generated)"

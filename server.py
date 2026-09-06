@@ -13,7 +13,6 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
 import uuid
 
 import psutil
@@ -21,7 +20,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -38,16 +36,25 @@ JOBS_FILE   = DATA_DIR / "jobs.json"
 PIPELINE    = SCRIPTS_DIR / "run.py"
 PORT        = int(os.getenv("PORT", 8080))
 HOST_PROJECT_DIR = os.getenv("HOST_PROJECT_DIR", "").strip()
-NOTEBOOKLM_MAX_WORDS = int(os.getenv("NOTEBOOKLM_MAX_WORDS", "500000"))
+
+# Shared naming rules (same module as the pipeline scripts -- the output
+# folder name must match what run.py actually writes, see wiki_names.py).
+sys.path.insert(0, str(SCRIPTS_DIR))
+import wiki_names  # noqa: E402  (scripts/ must be importable; if it is not,
+                   # the pipeline cannot run either -- fail fast at startup)
 
 # Grouping logic shared with generation (single source -- no gap
 # between the preview and the actual result).
-sys.path.insert(0, str(SCRIPTS_DIR))
 try:
     import pack_files
-except Exception:
+except Exception as _exc:  # preview degrades to unpacked groups -- say so loudly
     pack_files = None
+    print(f"WARNING: could not import {SCRIPTS_DIR / 'pack_files.py'} ({_exc}); "
+          f"the packing preview will NOT reflect MAX_FILES/dedup grouping.",
+          file=sys.stderr, flush=True)
 
+# Notebook caps come from the environment (docker-compose.yml / .env) so the
+# whole pipeline honors them; the job params inherit these defaults.
 DEFAULTS = {
     "namespaces":           "0",
     "delay":                0.5,
@@ -58,8 +65,8 @@ DEFAULTS = {
     "workers":              4,
     "force":                True,
     "export_formats":       "pdf",
-    "max_files":            50,
-    "notebooklm_max_words": 500000,
+    "max_files":            int(os.getenv("MAX_FILES", "50")),
+    "notebooklm_max_words": int(os.getenv("NOTEBOOKLM_MAX_WORDS", "500000")),
     "dedup":                True,
     "cat_workers":          8,
 }
@@ -82,8 +89,11 @@ def load_settings() -> dict:
     if SETTINGS_FILE.exists():
         try:
             base.update(json.loads(SETTINGS_FILE.read_text(encoding="utf-8")))
-        except Exception:
-            pass
+        except Exception as exc:
+            # Do not swallow silently: without a warning the user's saved
+            # settings vanish on every restart with no explanation.
+            print(f"WARNING: {SETTINGS_FILE} is unreadable ({exc}); "
+                  f"using built-in defaults.", file=sys.stderr, flush=True)
     return base
 
 
@@ -156,9 +166,10 @@ class Job:
             return None
 
     def wiki_slug(self) -> str:
+        # Same rule as run.py (wiki_names) -- the folder listed here must be
+        # the one the pipeline actually writes to.
         try:
-            host = urlparse(self.wiki_url).hostname or self.wiki_url
-            return re.sub(r"[^\w.-]", "_", host)
+            return wiki_names.wiki_slug(self.wiki_url)
         except Exception:
             return self.id
 
@@ -229,11 +240,9 @@ class Job:
         files = []
         for f in sorted(out.glob("*")):
             if f.is_file():
-                ko = f.stat().st_size / 1024
-                size = f"{ko/1024:.1f} MB" if ko >= 1024 else f"{max(ko, 1):.0f} KB"
                 files.append({"name": f.name,
                               "ext":  f.suffix.lstrip(".").lower(),
-                              "size": size})
+                              "size": _human_size(f.stat().st_size)})
         return files
 
 
@@ -528,24 +537,26 @@ def _packing_preview(job: Job, selection: Optional[list[str]], max_files: int) -
     except Exception:
         return {"error": "Unreadable category data."}
 
+    # Tree/word counts must load or the preview says so -- degrading silently
+    # to {} would show a preview that disagrees with the actual packing.
     tree = {}
     if job.category_tree_file().exists():
         try:
             tree = json.loads(job.category_tree_file().read_text(encoding="utf-8"))
         except Exception:
-            tree = {}
+            return {"error": "Unreadable category tree -- re-run the scan."}
     page_words = {}
     if job.page_words_file().exists():
         try:
             page_words = json.loads(job.page_words_file().read_text(encoding="utf-8"))
         except Exception:
-            page_words = {}
+            return {"error": "Unreadable page word counts -- re-run the scan."}
 
     sel = set(selection) if selection else None
     if sel is not None:
         groups = {k: v for k, v in groups.items() if k in sel}
 
-    max_words = int(job.params.get("notebooklm_max_words", NOTEBOOKLM_MAX_WORDS))
+    max_words = int(job.params.get("notebooklm_max_words", DEFAULTS["notebooklm_max_words"]))
     dedup     = bool(job.params.get("dedup", DEFAULTS["dedup"]))
     if pack_files is not None:
         packed = pack_files.pack(groups, tree, page_words, max_files or 0,
@@ -669,14 +680,9 @@ async def stop_job(job_id: str):
         raise HTTPException(404)
 
 
-@app.delete("/api/jobs/{job_id}")
-async def delete_job(job_id: str):
-    try:
-        await asyncio.to_thread(mgr.delete, job_id)
-        return {"ok": True}
-    except KeyError:
-        raise HTTPException(404)
-
+# Note: single-job deletion is intentionally not exposed as its own route --
+# the UI (and external callers) delete via POST /api/jobs/bulk_delete, which
+# covers the single-id case too.
 
 @app.get("/api/jobs/{job_id}/category_tree")
 async def get_category_tree(job_id: str):
@@ -1387,7 +1393,7 @@ function collectParams(base) {
     ...base,   // inherits keys not shown in the form (notebooklm_max_words, cat_workers…)
     namespaces: document.getElementById("f-ns")?.value?.trim() ?? base.namespaces,
     delay:      parseFloat(document.getElementById("f-delay")?.value) || 0.5,
-    max_pdf:    parseInt(document.getElementById("f-maxpdf")?.value)  || 100,
+    max_pdf:    parseInt(document.getElementById("f-maxpdf")?.value)  || 500,
     workers:    parseInt(document.getElementById("f-workers")?.value) || 4,
     max_files:  Number.isFinite(mf) ? mf : (base.max_files ?? 50),
     dedup:      document.getElementById("f-dedup")?.checked ?? base.dedup ?? true,

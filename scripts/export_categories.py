@@ -9,8 +9,9 @@ HTML cleanup: clean_html.py (removes MediaWiki noise).
 md conversion : markdownify (proven library).
 txt conversion: custom ArticleParser (readable structure).
 
-Selection filter: if SELECTION_FILE points to a JSON (list of categories),
-only those categories are exported.
+Selection and grouping are applied upstream (run.py): this script consumes
+the provided groups directly; ADD_DIVERS controls whether uncategorized
+pages are added to the MISC category.
 
 Usage:
   export_categories.py <html_dir> <category_groups.json> <out_dir> <formats>
@@ -26,19 +27,15 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import clean_html as _ch
+from wiki_names import MISC_CATEGORY, cat_stem  # same dir, on sys.path
 from markdownify import markdownify as _md
 
 VALID_FORMATS = {"txt", "md"}
 EXT = {"txt": ".txt", "md": ".md"}
 
-# Selection and grouping are applied upstream (run.sh): this script
-# consumes the provided groups directly. ADD_DIVERS controls whether
-# uncategorized pages are added (disabled when a selection is active).
+# ADD_DIVERS: add pages with no category into MISC_CATEGORY (disabled
+# upstream when a selection is active).
 ADD_DIVERS = os.getenv("ADD_DIVERS", "true").lower() != "false"
-
-
-class ExportError(Exception):
-    pass
 
 
 # ── txt parser (kept for the plain text format) ────────────────────────────────
@@ -146,11 +143,8 @@ def _render_md(title: str, body: str) -> str:
     return f"# {title}\n\n{content}"
 
 
-# ── file name ────────────────────────────────────────────────────────────────
-def cat_to_stem(cat: str) -> str:
-    safe = re.sub(r"[^\w\s\-]", "_", cat).strip()
-    safe = re.sub(r"\s+", "_", safe)
-    return safe[:80]
+# File names use cat_stem()/MISC_CATEGORY from wiki_names (single source,
+# shared with merge_pdf.py so PDFs and text files keep matching base names).
 
 
 def main(argv: list[str]) -> int:
@@ -178,8 +172,15 @@ def main(argv: list[str]) -> int:
     if groups_file.exists():
         try:
             groups = json.loads(groups_file.read_text(encoding="utf-8"))
-        except Exception:
-            print(f"⚠ {groups_file} unreadable - everything will go into 'Divers'", flush=True)
+        except Exception as e:
+            # Fail Fast: regrouping everything into the uncategorized file
+            # would silently produce one giant bogus output instead of the
+            # per-category files the user asked for.
+            print(f"✗ {groups_file} unreadable: {e}", file=sys.stderr, flush=True)
+            return 1
+    else:
+        print(f"  ⚠ {groups_file} not found -- everything goes into "
+              f"'{MISC_CATEGORY}'", flush=True)
 
     all_stems = {f.stem for f in html_dir.glob("*.html")}
     if not all_stems:
@@ -189,7 +190,7 @@ def main(argv: list[str]) -> int:
         categorized = {s for stems in groups.values() for s in stems}
         divers = sorted(all_stems - categorized)
         if divers:
-            groups = {**groups, "Divers": divers}
+            groups = {**groups, MISC_CATEGORY: divers}
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -215,7 +216,7 @@ def main(argv: list[str]) -> int:
         articles = [a for a in (get_article(s) for s in sorted(set(stems))) if a]
         if not articles:
             continue
-        stem_name = cat_to_stem(cat)
+        stem_name = cat_stem(cat)
         sep_md  = "\n\n---\n\n"
         sep_txt = "\n\n\n"
         for fmt in formats:

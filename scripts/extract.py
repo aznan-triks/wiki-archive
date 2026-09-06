@@ -18,6 +18,8 @@ import xml.etree.ElementTree as ET
 import mwparserfromhell
 import requests
 
+from wiki_names import page_stem  # scripts/ dir is on sys.path (run as a script)
+
 # ── args ──────────────────────────────────────────────────────────────────────
 XML_FILE    = sys.argv[1]
 DEST        = pathlib.Path(sys.argv[2])
@@ -68,11 +70,12 @@ img { max-width: 100%; height: auto; }
 
 # ── rendering via API ──────────────────────────────────────────────────────────
 _api_failures = 0
-_API_FAIL_LIMIT = 5
+_api_error_logged = False
+_API_FAIL_LIMIT = 5   # after N consecutive failures, degrade to text mode (logged)
 
 def render_via_api(title: str) -> tuple[str | None, list[str]]:
     """Returns (html_content, [categories]). html=None if the API call fails."""
-    global _api_failures
+    global _api_failures, _api_error_logged
     if not API_URL or _api_failures >= _API_FAIL_LIMIT:
         return None, []
     try:
@@ -113,10 +116,21 @@ def render_via_api(title: str) -> tuple[str | None, list[str]]:
         ]
 
         _api_failures = 0
+        _api_error_logged = False
         return content.strip(), cats
 
-    except Exception:
+    except Exception as exc:
         _api_failures += 1
+        # Log once per failure streak, and once when switching to text mode:
+        # without this the user only sees degraded output (README troubleshooting).
+        if not _api_error_logged:
+            _api_error_logged = True
+            print(f"  ⚠ API call failed for {title!r}: {exc} "
+                  f"(page rendered in text mode until the API recovers)", flush=True)
+        if _api_failures == _API_FAIL_LIMIT:
+            print(f"  ⚠ API unreachable after {_API_FAIL_LIMIT} consecutive failures -- "
+                  f"switching to text mode for the remaining pages "
+                  f"(no templates/tables; check that {API_URL} is reachable)", flush=True)
         return None, []
 
 # ── text rendering (fallback) ──────────────────────────────────────────────────
@@ -214,16 +228,18 @@ for event, elem in ET.iterparse(XML_FILE, events=("end",)):
     elif tag == f"{{{NS_MW}}}text":  _text  = elem.text or ""
     elif tag == f"{{{NS_MW}}}page":
         if _ns in KEEP_NS and _title:
-            safe    = re.sub(r"[^\w\s\-]", "_", _title)[:120]
+            safe    = page_stem(_title)
             outfile = DEST / f"{safe}.html"
 
             if outfile.exists():
                 resumed += 1
-                # Fetch categories if missing for this page (partial resume)
-                if safe not in categories and API_URL:
+                # Fetch categories if missing for this page (partial resume).
+                # Only while the API is alive, with the same politeness delay.
+                if safe not in categories and API_URL and _api_failures < _API_FAIL_LIMIT:
                     _, cats = render_via_api(_title)
                     if cats:
                         categories[safe] = cats
+                    time.sleep(DELAY)
             else:
                 content, cats = render_via_api(_title)
                 if content is not None:

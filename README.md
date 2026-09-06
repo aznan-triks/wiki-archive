@@ -170,8 +170,10 @@ data/
 │   │   │   └── (flat copy for merging)
 │   │   ├── categories.json            # Page → [direct categories]
 │   │   ├── category_groups.json       # Category → [pages with hierarchy]
-│   │   ├── 20260507-194427-ab55.log   # Raw logs
+│   │   ├── category_tree.json         # Category tree (selection UI + packing)
+│   │   ├── page_words.json            # Word weight per page
 │   │   └── ...
+│   ├── 20260507-194427-ab55.log       # Raw logs (one file per job)
 │   └── jobs.json                      # Metadata for all jobs
 │
 └── output/
@@ -256,6 +258,18 @@ http://localhost:8080
 - `./scripts/` → `/scripts:ro` — scripts (read-only, rebuilt on every startup to fix Windows line endings)
 
 ---
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt   # adds pytest (runtime deps: requirements.txt)
+python -m pytest
+```
+
+Tests live in `tests/`, need no network, and only touch a temporary data dir
+(`DATA_DIR` env is honored). Tests that exercise optional libraries
+(`requests`, `beautifulsoup4`, `markdownify`, `pikepdf` — all already listed in
+`requirements.txt`) auto-skip when the library is missing.
 
 ## Limitations & notes
 

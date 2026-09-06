@@ -11,13 +11,13 @@ Usage: build_categories.py <api_url> <categories.json> <category_groups.json>
 """
 import json
 import os
-import re
 import sys
-import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
+
+from wiki_names import page_stem  # scripts/ dir is on sys.path (run as a script)
 
 API_URL   = sys.argv[1].strip()
 CATS_FILE = sys.argv[2]
@@ -37,9 +37,6 @@ print(f"  {len(page_cats)} pages - {len(all_known_cats)} starting categories", f
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "wikiteam3/4.4.8 (https://github.com/saveweb/wikiteam3)"})
 
-def title_to_stem(title: str) -> str:
-    return re.sub(r"[^\w\s\-]", "_", title)[:120]
-
 # ── parallel BFS: discover the whole tree ──────────────────────────────────────
 # direct_pages[cat]  = stems of pages directly in cat
 # direct_subcats[cat] = names of direct subcategories of cat
@@ -47,8 +44,8 @@ direct_pages:  dict[str, set[str]]  = defaultdict(set)
 direct_subcats: dict[str, set[str]] = defaultdict(set)
 
 
-def fetch_category(cat: str) -> tuple[str, set[str], set[str]]:
-    """Queries the API for a category. Returns (cat, pages, subcats)."""
+def fetch_category(cat: str) -> tuple[str, set[str], set[str], str | None]:
+    """Queries the API for a category. Returns (cat, pages, subcats, error)."""
     pages: set[str]  = set()
     subs:  set[str]  = set()
     params = {
@@ -65,27 +62,33 @@ def fetch_category(cat: str) -> tuple[str, set[str], set[str]]:
             data = r.json()
             for m in data.get("query", {}).get("categorymembers", []):
                 if m["ns"] == 0:
-                    pages.add(title_to_stem(m["title"]))
+                    pages.add(page_stem(m["title"]))
                 elif m["ns"] == 14:
                     subs.add(m["title"].split(":", 1)[-1])
             if "continue" not in data:
                 break
             params.update(data["continue"])
     except Exception as e:
-        print(f"  ⚠ {cat}: {e}", flush=True)
-    return cat, pages, subs
+        # The error is returned, not swallowed: the caller fails the whole
+        # step -- a partially-read category silently drops pages from the
+        # generated files (data corruption, per Fail Fast rule).
+        return cat, pages, subs, str(e)
+    return cat, pages, subs, None
 
 
 explored: set[str] = set()
 frontier: set[str] = set(all_known_cats)
-done = 0
+done   = 0
+failed: dict[str, str] = {}
 
 with ThreadPoolExecutor(max_workers=CAT_WORKERS) as pool:
     while frontier:
         todo = [c for c in frontier if c not in explored]
         explored.update(todo)
         frontier = set()
-        for cat, pages, subs in pool.map(fetch_category, todo):
+        for cat, pages, subs, err in pool.map(fetch_category, todo):
+            if err:
+                failed[cat] = err
             direct_pages[cat]  |= pages
             direct_subcats[cat] |= subs
             for sub in subs:
@@ -93,6 +96,15 @@ with ThreadPoolExecutor(max_workers=CAT_WORKERS) as pool:
                     frontier.add(sub)
         done += len(todo)
         print(f"  ... {done} categories explored ({len(frontier)} pending)", flush=True)
+
+if failed:
+    for cat, err in list(failed.items())[:10]:
+        print(f"  ✗ {cat}: {err}", flush=True)
+    more = f" (+{len(failed) - 10} more)" if len(failed) > 10 else ""
+    print(f"✗ Category hierarchy scan failed: {len(failed)} categories could not be "
+          f"read{more}.\n  The grouping would be silently incomplete -- fix the "
+          f"wiki access and re-run the job (Fail Fast).", flush=True)
+    sys.exit(1)
 
 # Add pages from categories.json (consistency with what we extracted)
 for stem, cats in page_cats.items():

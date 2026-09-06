@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Wiki Archive pipeline orchestrator (native port of run.sh, no bash/coreutils).
+Wiki Archive pipeline orchestrator (pure Python, no bash/coreutils).
 
-Driven entirely by environment variables -- same interface as the old
-run.sh -- to remain a drop-in replacement for server.py, both natively
+Driven entirely by environment variables -- the single source of truth is
+server.py's DEFAULTS, which every job's env is built from. Runs natively
 (Windows/Linux/macOS) and in Docker.
 """
 from __future__ import annotations
@@ -19,7 +19,8 @@ import unicodedata
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
+
+from wiki_names import MISC_CATEGORY, wiki_slug  # same dir, on sys.path
 
 PY = sys.executable
 SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -58,11 +59,11 @@ def human_size(path: Path) -> str:
         total = path.stat().st_size
     elif path.is_dir():
         total = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
-    for unit in ("o", "Ko", "Mo", "Go", "To"):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
         if total < 1024:
-            return f"{total:.0f}{unit}" if unit == "o" else f"{total:.1f}{unit}"
+            return f"{total:.0f}{unit}" if unit == "B" else f"{total:.1f}{unit}"
         total /= 1024
-    return f"{total:.1f}Po"
+    return f"{total:.1f}PB"
 
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
@@ -72,11 +73,8 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
 
 
 def flatten(src: Path, dest: Path, ext: str) -> int:
-    """
-    Python port of flatten.sh: flat-copies every *ext* file from src to dest,
-    flattening subfolders into the filename and normalizing to ASCII
-    (replaces the bash script's iconv//TRANSLIT + sed + cut).
-    """
+    """Flat-copy every *ext* file from src to dest, flattening subfolders into
+    the filename and normalizing to ASCII (pure Python, no coreutils)."""
     dest.mkdir(parents=True, exist_ok=True)
     count = 0
     for f in sorted(src.rglob(f"*{ext}")):
@@ -97,11 +95,6 @@ def flatten(src: Path, dest: Path, ext: str) -> int:
         count += 1
     log(f"✓ Flattened: {count} files")
     return count
-
-
-def wiki_slug(url: str) -> str:
-    host = urlparse(url).hostname or url
-    return re.sub(r"[^\w.-]", "_", host)
 
 
 def config_field(config_json: Path, *keys: str) -> str:
@@ -140,7 +133,7 @@ def main() -> int:
 
     namespaces = env("NAMESPACES", "0")
     delay = env("DELAY", "0.5")
-    max_pdf = env("MAX_PDF", "100")
+    max_pdf = env("MAX_PDF", "500")     # default per README config table
     images = env_bool("IMAGES", True)
     clean = env_bool("CLEAN", False)
     rerender = env_bool("RERENDER", False)
@@ -291,6 +284,10 @@ def main() -> int:
             log(f"Source: {xml_file} -> {html_dir}")
             run([PY, str(SCRIPTS_DIR / "extract.py"), str(xml_file), str(html_dir), api_url, delay, str(categories_file)])
             html_count = len(list(html_dir.glob("*.html")))
+            if html_count == 0:
+                log(f"⚠ FAILURE: extraction produced 0 HTML pages from {xml_file} "
+                    f"(wrong namespaces? empty dump?) -- aborting, nothing to export")
+                return 1
             log(f"{html_count} HTML files generated")
 
     # ── 3. PDF conversion ────────────────────────────────────────────────────────
@@ -328,19 +325,30 @@ def main() -> int:
                 try:
                     run([PY, str(SCRIPTS_DIR / "measure_words.py"), str(html_dir), str(page_words)])
                 except subprocess.CalledProcessError:
-                    log("⚠ Word count measurement failed (weights shown as 0)")
+                    # Fail Fast: with all weights at 0 the MAX_FILES / word-limit
+                    # grouping silently produces files that exceed the NotebookLM
+                    # per-source limit -- better to abort than to corrupt.
+                    log("⚠ FAILURE: page word-count measurement failed -- "
+                        "grouping limits cannot be honored, aborting")
+                    return 1
 
             if api_url and categories_file.exists():
                 log(f"Building hierarchy via API ({cat_workers} in parallel)...")
                 os.environ["CAT_WORKERS"] = cat_workers
                 run([PY, str(SCRIPTS_DIR / "build_categories.py"), api_url, str(categories_file), str(cat_groups)])
-            else:
-                log("⚠ No API or categories.json missing -- direct grouping without hierarchy")
+            elif categories_file.exists():
+                log("⚠ No API -- direct grouping without hierarchy (text mode)")
                 page_cats = json.loads(categories_file.read_text(encoding="utf-8"))
                 groups = defaultdict(list)
                 for stem, cats in page_cats.items():
-                    for cat in (cats or ["Divers"]):
+                    for cat in (cats or [MISC_CATEGORY]):
                         groups[cat].append(stem)
+            else:
+                # Clear, actionable message instead of a raw FileNotFoundError
+                # traceback in the UI log.
+                log(f"⚠ FAILURE: {categories_file} not found -- delete the 'html' "
+                    f"folder of this job (or check 'New dump') and re-run extraction")
+                return 1
                 cat_groups.write_text(
                     json.dumps({k: sorted(v) for k, v in groups.items()}, ensure_ascii=False, indent=2),
                     encoding="utf-8",
@@ -398,23 +406,29 @@ def main() -> int:
 
         if want_docs:
             log(f"Text ({doc_formats}): one file per category")
-            try:
-                run([PY, str(SCRIPTS_DIR / "export_categories.py"), str(html_dir), str(cat_groups), str(out_dir), doc_formats])
-            except subprocess.CalledProcessError:
-                log("⚠ Text export failed (PDFs unaffected)")
+            # Fail Fast: a crashed text export must fail the job -- swallowing
+            # it here marked the job "done" while the requested .md/.txt files
+            # were simply missing (PDFs may stay unaffected, but the user
+            # asked for these formats).
+            run([PY, str(SCRIPTS_DIR / "export_categories.py"), str(html_dir), str(cat_groups), str(out_dir), doc_formats])
+
+    produced = [f for f in sorted(out_dir.glob("*")) if f.is_file()]
+    if not produced:
+        # Fail Fast: the output was wiped at step 5 and nothing replaced it --
+        # report a failure instead of a "COMPLETE" banner with an empty folder.
+        print()
+        print("=" * 44)
+        print("  ⚠ FAILURE: pipeline produced 0 output files in " + str(out_dir))
+        print("=" * 44)
+        return 1
 
     print()
     print("=" * 44)
     print(f"  ✓ PIPELINE COMPLETE -- {datetime.now():%Y-%m-%d %H:%M:%S}")
     print(f"  Files in {out_dir}")
     print("=" * 44)
-    produced = sorted(out_dir.glob("*")) if out_dir.exists() else []
-    if produced:
-        for f in produced:
-            if f.is_file():
-                print(f"  {human_size(f):>8}  {f.name}")
-    else:
-        print("  (no files generated)")
+    for f in produced:
+        print(f"  {human_size(f):>8}  {f.name}")
 
     return 0
 
@@ -423,5 +437,8 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except subprocess.CalledProcessError as exc:
-        log(f"⚠ Failure in {exc.cmd[0] if exc.cmd else '?'} (code {exc.returncode})")
+        # Log the failing command itself -- cmd[0] alone only ever blames the
+        # Python interpreter, hiding which pipeline step actually died.
+        log(f"⚠ FAILURE: pipeline step exited with code {exc.returncode}: "
+            f"{' '.join(str(c) for c in exc.cmd)}")
         sys.exit(exc.returncode or 1)

@@ -50,6 +50,12 @@ regression test in `tests/test_audit_fixes.py`.
 - The existing "Namespaces" setting now really selects what is extracted
   (`0`, `0,14`, `all`); changing it re-runs the extraction.
 
+- PDF generation converts only the pages the files will contain, not the whole wiki.
+- Extraction accepts every MediaWiki export schema version (it only matched `export-0.11`);
+  `Namespaces = all` no longer passes an invalid value to the dump tool.
+- Settings are validated like jobs; a delay of `0` can be set; the default format
+  list can no longer be saved empty.
+
 ### Security
 
 - Cross-site writes are refused (`Origin` must match `Host`): a web page could

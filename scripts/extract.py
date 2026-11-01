@@ -30,7 +30,11 @@ CATS_FILE   = pathlib.Path(sys.argv[5]) if len(sys.argv) > 5 else DEST.parent / 
 
 DEST.mkdir(parents=True, exist_ok=True)
 
-NS_MW   = "http://www.mediawiki.org/xml/export-0.11/"
+def _local(tag: str) -> str:
+    """'{http://www.mediawiki.org/xml/export-0.10/}page' -> 'page' (the export
+    schema version differs between MediaWiki releases)."""
+    return tag.rsplit("}", 1)[-1]
+
 # Namespaces to archive: the job's NAMESPACES setting ("0" = articles only,
 # "0,14" adds category pages, "all" keeps everything). Default "0".
 _NS_SETTING = os.getenv("NAMESPACES", "0").strip().lower()
@@ -228,11 +232,11 @@ seen_stems: dict[str, str] = {}   # file stem -> first title that claimed it
 collisions: list[tuple[str, str]] = []
 
 for event, elem in ET.iterparse(XML_FILE, events=("end",)):
-    tag = elem.tag
-    if   tag == f"{{{NS_MW}}}title": _title = elem.text or ""
-    elif tag == f"{{{NS_MW}}}ns":    _ns    = elem.text or "0"
-    elif tag == f"{{{NS_MW}}}text":  _text  = elem.text or ""
-    elif tag == f"{{{NS_MW}}}page":
+    tag = _local(elem.tag)
+    if   tag == "title": _title = elem.text or ""
+    elif tag == "ns":    _ns    = elem.text or "0"
+    elif tag == "text":  _text  = elem.text or ""
+    elif tag == "page":
         if (KEEP_NS is None or _ns in KEEP_NS) and _title:
             safe    = page_stem(_title)
             outfile = DEST / f"{safe}.html"

@@ -692,6 +692,9 @@ async def get_settings():
 @app.put("/api/settings")
 async def put_settings(req: Request):
     body = await req.json()
+    problem = _validate_params(body, set(body) & set(DEFAULTS))
+    if problem:
+        return JSONResponse({"error": problem}, status_code=400)
     return {"settings": save_settings(body)}
 
 
@@ -1375,6 +1378,8 @@ function buildSettingsPage(s) {
         <input type="number" id="s-catworkers" value="${s.cat_workers}" min="1" max="32" style="width:100%" title="Faster, but puts more load on the wiki"/></div>
       <div class="opt-group opt-check"><input type="checkbox" id="s-images" ${s.images ? "checked" : ""}/><span>Include images</span></div>
       <div class="opt-group opt-check"><input type="checkbox" id="s-force" ${s.force !== false ? "checked" : ""}/><span>Skip Internet Archive</span></div>
+      <div class="opt-group opt-check"><input type="checkbox" id="s-perjob" ${s.output_per_job ? "checked" : ""}/><span>Separate output folder per job</span></div>
+      <div class="opt-group opt-check"><input type="checkbox" id="s-unique" ${s.unique_names ? "checked" : ""}/><span>Unique file names <small style="color:var(--muted)">(needs a new dump)</small></span></div>
     </div>
   </div>
 
@@ -1402,16 +1407,20 @@ function onMaxFilesInput() {
   const match = Object.entries(NLM_PLANS).find(([, p]) => p.sources === v);
   document.getElementById("s-plan").value = match ? match[0] : "custom";
 }
+function numOr(v, fallback) { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n : fallback; }
 async function saveSettings() {
   const fmt = ALL_FORMAT_IDS.filter(id => document.getElementById("s-fmt-" + id)?.checked);
+  if (!fmt.length) { showToast("Choose at least one default format.", {type:"err"}); return; }
   const body = {
     notebooklm_plan:      document.getElementById("s-plan").value,
     max_files:            parseInt(document.getElementById("s-maxfiles").value) || 0,
     notebooklm_max_words: parseInt(document.getElementById("s-maxwords").value) || 500000,
     dedup:                document.getElementById("s-dedup").checked,
-    export_formats:       fmt.length ? (fmt.length === ALL_FORMAT_IDS.length ? "all" : fmt.join(",")) : "none",
-    namespaces:           document.getElementById("s-ns").value.trim(),
-    delay:                parseFloat(document.getElementById("s-delay").value) || 0.5,
+    export_formats:       fmt.length === ALL_FORMAT_IDS.length ? "all" : fmt.join(","),
+    namespaces:           document.getElementById("s-ns").value.trim() || "0",
+    delay:                numOr(document.getElementById("s-delay").value, 0.5),
+    output_per_job:       document.getElementById("s-perjob").checked,
+    unique_names:         document.getElementById("s-unique").checked,
     cat_workers:          parseInt(document.getElementById("s-catworkers").value) || 8,
     images:               document.getElementById("s-images").checked,
     force:                document.getElementById("s-force").checked,
@@ -1422,6 +1431,7 @@ async function saveSettings() {
     method: "PUT", headers: {"Content-Type":"application/json"},
     body: JSON.stringify(body),
   }).then(r => r.json()).catch(() => null);
+  if (r && r.error) { showToast(r.error, {type:"err"}); return; }
   if (r && r.settings) { globalSettings = r.settings; showToast("Settings saved ✓", {type:"ok"}); }
   else showToast("Failed to save settings", {type:"err"});
 }
@@ -1489,7 +1499,7 @@ function collectParams(base) {
   return {
     ...base,   // inherits keys not shown in the form (notebooklm_max_words, cat_workers…)
     namespaces: document.getElementById("f-ns")?.value?.trim() ?? base.namespaces,
-    delay:      parseFloat(document.getElementById("f-delay")?.value) || 0.5,
+    delay:      numOr(document.getElementById("f-delay")?.value, 0.5),
     max_pdf:    parseInt(document.getElementById("f-maxpdf")?.value)  || 500,
     workers:    parseInt(document.getElementById("f-workers")?.value) || 4,
     max_files:  Number.isFinite(mf) ? mf : (base.max_files ?? 50),

@@ -360,3 +360,45 @@ def test_changing_namespaces_redoes_a_finished_extraction(tmp_path):
     job = _extraction_job(tmp_path, marker=True)       # marker says namespaces "0"
     r = _run(tmp_path, PHASE="scan", EXPORT_FORMATS="md", NAMESPACES="0,14")
     assert "already present" not in r.stdout
+
+
+def test_generation_converts_only_the_selected_pages_to_pdf(tmp_path):
+    """Generating a selection of a big wiki must not convert the whole wiki."""
+    try:
+        from weasyprint import HTML  # noqa: F401
+    except (ImportError, OSError):
+        pytest.skip("WeasyPrint/pango unavailable")
+    job = tmp_path / "job"
+    (job / "html").mkdir(parents=True)
+    for t in ("Pistol", "Rifle", "Lore"):
+        (job / "html" / f"{t}.html").write_text(_page(t), encoding="utf-8")
+    (job / "category_groups.json").write_text(
+        json.dumps({"Weapons": ["Pistol"], "Other": ["Rifle"]}), encoding="utf-8")
+    (job / "selection.json").write_text(json.dumps(["Weapons"]), encoding="utf-8")
+    r = _run(tmp_path, EXPORT_FORMATS="pdf")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert sorted(p.name for p in (job / "pdf").glob("*.pdf")) == ["Pistol.pdf"]
+
+
+def test_extraction_accepts_other_export_schema_versions(tmp_path):
+    pytest.importorskip("mwparserfromhell")
+    xml = tmp_path / "w.xml"
+    xml.write_text(_xml("Alpha").replace("export-0.11", "export-0.10"), encoding="utf-8")
+    r = subprocess.run([sys.executable, str(EXTRACT), str(xml), str(tmp_path / "html"), "", "0",
+                        str(tmp_path / "c.json")],
+                       env={**os.environ, "PYTHONPATH": str(ROOT / "scripts")},
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "html" / "Alpha.html").exists()
+
+
+def test_invalid_settings_are_refused(tmp_path):
+    res = _server_snippet(tmp_path, """
+        from fastapi.testclient import TestClient
+        c = TestClient(server.app)
+        bad = c.put("/api/settings", json={"export_formats": "none"})
+        good = c.put("/api/settings", json={"delay": 0, "output_per_job": True})
+        result = {"bad": bad.status_code, "good": good.status_code,
+                  "delay": good.json()["settings"]["delay"]}
+    """)
+    assert res == {"bad": 400, "good": 200, "delay": 0.0}

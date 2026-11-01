@@ -78,7 +78,9 @@ same grouping regardless of format — only the extension changes.
 - **Pages in multiple categories**: present in every relevant file (intended for NotebookLM).
 - **Uncategorized pages** → `Misc.{ext}`.
 - **Everything goes into the same folder**: `data/output/{wiki-hostname}/` (one file per
-  category and per format), ready to import into NotebookLM.
+  category and per format), ready to import into NotebookLM. A new generation replaces
+  that folder only once it succeeded. Tick **Separate output folder** to give a job its
+  own `data/output/{wiki-hostname}--{job}/` instead.
 - Step 3 (PDF rendering) and its "Workers / Max pages" options only apply to the PDF format.
 - After the job, the UI lists the files plus a **"📂 Copy path"** button
   (to paste into File Explorer). For a **full Windows path**, set
@@ -108,7 +110,8 @@ The interface has no password, so the port is published on this machine only
 1. Click **"+ New"**
 2. Enter the wiki URL (any page)
 3. Adjust options (optional):
-   - **Namespaces**: `0` = main articles (default)
+   - **Namespaces**: `0` = main articles (default), `0,14` adds category pages, `all` = everything.
+     Changing it on an existing job needs a **New full dump**
    - **Delay**: seconds between requests (0.5s = respectful)
    - **Images**: download the wiki's images
    - **New dump**: wipe everything and start from scratch
@@ -141,7 +144,9 @@ The interface has no password, so the port is published on this machine only
 
 | Option | Default | Effect |
 |--------|--------|-------|
-| **Namespaces** | `0` | Which namespaces to fetch (0=articles, 10=templates, 14=categories) |
+| **Namespaces** | `0` | Which namespaces to archive (0=articles, 1=talk, 10=templates, 14=categories, `all`) |
+| **Separate output folder** | ✗ | The job writes to `data/output/<wiki>--<job>` and never overwrites another job's files |
+| **Unique file names** | ✗ | Titles with special characters (`A/B` vs `A:B`) get a short hash so no page is lost; needs a new dump |
 | **Delay** | 0.5s | Pause between wikiteam3 API calls (respects rate limit) |
 | **Images** | ✓ | Download the wiki's images |
 | **New dump** | ✗ | Wipes everything → starts from scratch (~25 min for medium wikis) |

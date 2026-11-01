@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
 Converts each HTML file to PDF via WeasyPrint, in parallel.
-Usage: convert.py <src_dir> <out_dir> [workers]
+Usage: convert.py <src_dir> <out_dir> [workers] [stems.json]
+  stems.json (optional): JSON list of page stems -- only those are converted.
 """
+import json
 import sys
 import time
 import os
@@ -28,6 +30,9 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     files = sorted(src_dir.glob("*.html"))
+    if len(sys.argv) > 4:
+        wanted = set(json.loads(Path(sys.argv[4]).read_text(encoding="utf-8")))
+        files = [f for f in files if f.stem in wanted]
     total = len(files)
     if total == 0:
         print("⚠ No HTML files found", flush=True)

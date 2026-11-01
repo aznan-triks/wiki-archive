@@ -212,11 +212,12 @@ def main() -> int:
                     "wikiteam3dumpgenerator",
                     access_flag, wiki_url,
                     "--xml", "--curonly",
-                    "--namespaces", namespaces,
                     "--delay", delay,
                     "--retries", "5",
                     "--path", str(dump_dir),
                 ]
+                if namespaces.strip().lower() not in ("all", "*", ""):
+                    dump_args += ["--namespaces", namespaces]   # omitted = every namespace
                 if images:
                     dump_args.append("--images")
                 if force:
@@ -285,22 +286,38 @@ def main() -> int:
     print()
     print("━━━ [3/5] PDF CONVERSION ━━━")
 
+    def convert_pdfs(stems: list[str] | None) -> bool:
+        """Converts HTML -> PDF (all pages, or only `stems`); convert.py skips
+        the PDFs that already exist. False if nothing could be produced."""
+        cmd = [PY, str(SCRIPTS_DIR / "convert.py"), str(html_dir), str(pdf_dir), workers]
+        if stems is not None:
+            stems_file = job_dir / "pdf_stems.json"
+            stems_file.write_text(json.dumps(stems, ensure_ascii=False), encoding="utf-8")
+            cmd.append(str(stems_file))
+        if not any(html_dir.glob("*.html")):
+            log(f"⚠ FAILURE: no HTML pages in {html_dir} -- run the scan first")
+            return False
+        log(f"Source: {html_dir} -> {pdf_dir} ({workers} workers)")
+        run(cmd)
+        n = len(list(pdf_dir.glob("*.pdf")))
+        log(f"{n} PDFs -- total size: {human_size(pdf_dir)}")
+        if n == 0:
+            log("⚠ FAILURE: no PDF could be produced -- on Windows the GTK3 "
+                "runtime is required (Markdown/text exports work without it)")
+        return n > 0
+
     pdf_count = len(list(pdf_dir.glob("*.pdf"))) if pdf_dir.exists() else 0
     if phase == "scan":
         log("↩ Skipped (scan phase -- PDFs are made at generation)")
     elif not want_pdf:
         log("Skipped -- PDF format not requested")
+    elif phase == "generate":
+        log("↩ Deferred to step 5 (only the selected pages are converted)")
     elif pdf_count >= html_count and pdf_count > 0:
         skip_step(f"{pdf_count} PDFs already present ({human_size(pdf_dir)})")
     else:
         with Step():
-            log(f"Source: {html_dir} -> {pdf_dir} ({workers} workers)")
-            run([PY, str(SCRIPTS_DIR / "convert.py"), str(html_dir), str(pdf_dir), workers])
-            pdf_count = len(list(pdf_dir.glob("*.pdf")))
-            log(f"{pdf_count} PDFs -- total size: {human_size(pdf_dir)}")
-            if pdf_count == 0:
-                log("⚠ FAILURE: no PDF could be produced -- on Windows the GTK3 "
-                    "runtime is required (Markdown/text exports work without it)")
+            if not convert_pdfs(None):
                 return 1
 
     # ── 4. category hierarchy ───────────────────────────────────────────────────
@@ -400,6 +417,21 @@ def main() -> int:
             os.environ["ADD_DIVERS"] = "true" if add_divers else "false"
 
             if want_pdf:
+                if phase == "generate":
+                    # Convert only what the files below will contain (a selection
+                    # of a big wiki must not convert the whole wiki).
+                    if add_divers:
+                        needed = sorted(f.stem for f in html_dir.glob("*.html"))
+                    else:
+                        groups_final = json.loads(cat_groups.read_text(encoding="utf-8"))
+                        needed = sorted({st for stems in groups_final.values() for st in stems})
+                    missing = [st for st in needed if not (pdf_dir / f"{st}.pdf").exists()]
+                    if missing:
+                        log(f"Converting {len(missing)} of {len(needed)} selected page(s) to PDF")
+                        if not convert_pdfs(needed):
+                            return 1
+                    else:
+                        log(f"All {len(needed)} selected PDF(s) already exist")
                 log(f"PDF: one file per category (max {max_pdf} pages)")
                 # PDFs are read in place: their names are the page stems used
                 # by category_groups.json (spaces and accents included).

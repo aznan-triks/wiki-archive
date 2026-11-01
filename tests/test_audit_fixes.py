@@ -283,3 +283,20 @@ def test_server_listens_locally_unless_told_otherwise(tmp_path):
     default = _server_snippet(tmp_path, "result = server.BIND_HOST")
     docker = _server_snippet(tmp_path, "result = server.BIND_HOST", BIND_HOST="0.0.0.0")
     assert (default, docker) == ("127.0.0.1", "0.0.0.0")
+
+
+def test_invalid_job_parameters_are_refused_not_persisted(tmp_path):
+    res = _server_snippet(tmp_path, """
+        from fastapi.testclient import TestClient
+        c = TestClient(server.app)
+        url = "https://x.test/api.php"
+        bad = {k: c.post("/api/jobs", json={"wiki_url": url, k: v}).status_code
+               for k, v in [("max_files", "abc"), ("max_files", -1), ("workers", 0),
+                            ("delay", "slow"), ("dedup", "yes"), ("export_formats", "none")]}
+        ok = c.post("/api/jobs", json={"wiki_url": url, "max_files": "25", "delay": 0,
+                                       "export_formats": "md,txt"})
+        result = {"bad": bad, "ok": ok.status_code, "max_files": ok.json()["params"]["max_files"],
+                  "jobs": len(c.get("/api/jobs").json())}
+    """)
+    assert set(res["bad"].values()) == {400}
+    assert (res["ok"], res["max_files"], res["jobs"]) == (200, 25, 1)

@@ -531,7 +531,7 @@ class JobManager:
         finally:
             job._proc = None
             if job.status == "stopped":
-                job.push("Stopped. You can restart it via Resume.")
+                job.push("Stopped. Start the scan again to continue where it left off.")
             if not job.logs or job.logs[-1] != "__END__":
                 job.push("__END__")
             self._save()
@@ -566,9 +566,9 @@ def _packing_preview(job: Job, selection: Optional[list[str]], max_files: int) -
         except Exception:
             return {"error": "Unreadable page word counts -- re-run the scan."}
 
-    sel = set(selection) if selection else None
-    if sel is not None:
-        groups = {k: v for k, v in groups.items() if k in sel}
+    all_groups = groups
+    groups, covers_all = (pack_files.select_groups(groups, tree, selection)
+                          if pack_files is not None else (groups, True))
 
     max_words = int(job.params.get("notebooklm_max_words", DEFAULTS["notebooklm_max_words"]))
     dedup     = bool(job.params.get("dedup", DEFAULTS["dedup"]))
@@ -580,6 +580,13 @@ def _packing_preview(job: Job, selection: Optional[list[str]], max_files: int) -
 
     def words_of(stems):
         return sum(page_words.get(s, 0) for s in stems)
+
+    # Pages without a category become one extra "Misc" file at export time
+    # (after packing, not counted in max_files) -- show it in the preview too.
+    all_groups_pages = {s for v in all_groups.values() for s in v}
+    misc = set(page_words) - all_groups_pages if covers_all else set()
+    if misc:
+        packed = {**packed, wiki_names.MISC_CATEGORY: sorted(misc)}
 
     out_groups = [
         {"name": n, "pages": len(s), "words": words_of(s)}
@@ -615,6 +622,46 @@ async def list_jobs():
     return [j.meta() for j in mgr.list()]
 
 
+_INT_PARAMS = {"max_pdf": 1, "workers": 1, "max_files": 0, "notebooklm_max_words": 0, "cat_workers": 1}
+_BOOL_PARAMS = {k for k, v in DEFAULTS.items() if isinstance(v, bool)}
+
+
+def _validate_params(params: dict, keys) -> Optional[str]:
+    """Returns a clear message for the first invalid value among `keys` (the
+    ones the caller actually sent), else None; numbers are normalized in place.
+    (A string like "abc" used to be persisted, then crashed every later call.)"""
+    for key in keys:
+        v = params.get(key)
+        if key in _INT_PARAMS:
+            minimum = _INT_PARAMS[key]
+            try:
+                if isinstance(v, bool):
+                    raise ValueError
+                n = int(float(v))
+                if n != float(v):
+                    raise ValueError
+            except (TypeError, ValueError):
+                return f"{key} must be a whole number >= {minimum}."
+            if n < minimum:
+                return f"{key} must be a whole number >= {minimum}."
+            params[key] = n
+        elif key == "delay":
+            try:
+                params[key] = float(v)
+            except (TypeError, ValueError):
+                return "delay must be a number >= 0."
+            if params[key] < 0:
+                return "delay must be a number >= 0."
+        elif key in _BOOL_PARAMS:
+            if not isinstance(v, bool):
+                return f"{key} must be true or false."
+        elif key == "export_formats":
+            fmts = str(v or "")
+            if fmts != "all" and (not fmts or not set(fmts.split(",")) <= {"pdf", "md", "txt"}):
+                return "export_formats must be 'all' or a comma list of pdf, md, txt."
+    return None
+
+
 @app.post("/api/jobs")
 async def create_job(req: Request):
     body    = await req.json()
@@ -624,6 +671,9 @@ async def create_job(req: Request):
     # Base = global settings; the request body can override
     settings = load_settings()
     params   = {k: body.get(k, settings.get(k, DEFAULTS[k])) for k in DEFAULTS}
+    problem  = _validate_params(params, set(body) & set(DEFAULTS))
+    if problem:
+        return JSONResponse({"error": problem}, status_code=400)
     job      = mgr.create(url, params)
     return job.meta()
 
@@ -647,7 +697,11 @@ async def patch_job(job_id: str, req: Request):
         if "wiki_url" in body:
             job.wiki_url = body["wiki_url"].strip()
         if "params" in body:
-            job.params = {k: body["params"].get(k, v) for k, v in DEFAULTS.items()}
+            params = {k: body["params"].get(k, v) for k, v in DEFAULTS.items()}
+            problem = _validate_params(params, set(body["params"]) & set(DEFAULTS))
+            if problem:
+                return JSONResponse({"error": problem}, status_code=400)
+            job.params = params
         mgr._save()
         return job.meta()
     except KeyError:
@@ -725,10 +779,11 @@ async def get_category_tree(job_id: str):
     if not tf.exists():
         return {"error": "Tree not found -- run a scan first."}
     tree = json.loads(tf.read_text(encoding="utf-8"))
-    # Lighten the payload: the UI doesn't need the page list per node (large wikis)
+    # Lighten the payload: the UI doesn't need the page list per node (large
+    # wikis) -- only whether the category has pages of its own.
     for node in tree.get("nodes", {}).values():
-        node.pop("pages", None)
-    return tree
+        node["own_pages"] = len(node.pop("pages", None) or [])
+    return {**tree, "own_prefix": pack_files.OWN_PREFIX if pack_files else "own:"}
 
 
 @app.post("/api/jobs/{job_id}/preview_packing")
@@ -1127,6 +1182,7 @@ let pendingDel  = new Set();   // jobs pending deletion (undoable)
 // tree (lazy render -- an "ik" = rendered instance of a category)
 let treeData   = null;
 let nodeState  = {};   // cat -> 0 | 1 | 2
+let ownState   = {};   // cat -> 0 | 2 : are the category's OWN pages (not in a subcategory) selected?
 let parentMap  = {};   // cat -> [parents]
 let ikCat      = {};   // ik -> cat
 let ikAnc      = {};   // ik -> Set(ancestors) to cut cycles
@@ -1457,9 +1513,10 @@ async function ensureJob(existingId) {
 }
 
 async function scanFromForm(existingId) {
+  if (collectFormats() === "none") { showToast("Choose at least one format.", {type:"err"}); return; }
   const id = await ensureJob(existingId);
   if (!id) return;
-  treeData = null; nodeState = {};
+  treeData = null; nodeState = {}; ownState = {};
   creatingNew = false;
   selectedId = id;
   await fetch(`/api/jobs/${id}/scan`, { method: "POST" });
@@ -1481,7 +1538,7 @@ async function submitFull(existingId) {
 // ── selection & detail rendering ─────────────────────────────────────────────
 function selectJob(id) {
   selectedId = id; currentStep = -1; creatingNew = false;
-  treeData = null; nodeState = {};
+  treeData = null; nodeState = {}; ownState = {};
   stopLogStream();
   const job = allJobs[id];
   if (!job) return;
@@ -1511,7 +1568,7 @@ function renderFullDetail(job) {
   <div id="d-banner">${buildBanner(job)}</div>
   <div id="d-actions" class="actions">${buildActions(job)}</div>
   <div id="d-gen" class="card" style="${showGen ? "" : "display:none"}">${buildGenPanel(job)}</div>
-  <div id="d-form">${showForm && !showGen ? buildForm(job) : ""}</div>
+  <div id="d-form" data-shown="${showForm && !showGen ? 1 : 0}">${showForm && !showGen ? buildForm(job) : ""}</div>
   <div class="card">
     <div class="card-title">Progress</div>
     <div id="d-steps" class="steps">${buildSteps()}</div>
@@ -1638,8 +1695,20 @@ function updateDetail(job) {
   const gen = document.getElementById("d-gen");
   if (gen && canGenerate(job) && gen.style.display === "none") {
     gen.style.display = ""; gen.innerHTML = buildGenPanel(job);
-    const form = document.getElementById("d-form"); if (form) form.innerHTML = "";
     loadTree(job.id);
+  }
+  // ...and hide it when the data it needs was freed
+  if (gen && !canGenerate(job) && gen.style.display !== "none") {
+    gen.style.display = "none"; gen.innerHTML = "";
+  }
+  // The launch form follows the state: after an error/stop/purge the user must
+  // get the buttons back (it was only drawn when the page was first opened).
+  const form = document.getElementById("d-form");
+  if (form) {
+    const want = ["pending","stopped","done","error","scanned"].includes(job.status) && !canGenerate(job);
+    const shown = form.dataset.shown === "1";
+    if (want && !shown) { form.innerHTML = buildForm(job); form.dataset.shown = "1"; }
+    else if (!want && shown) { form.innerHTML = ""; form.dataset.shown = "0"; }
   }
   if (job.status === "error" && currentStep >= 0) setStep(currentStep, "error");
   const filesEl = document.getElementById("d-files");
@@ -1656,22 +1725,58 @@ function buildParentMap() {
     for (const child of (node.children || [])) (parentMap[child] ||= []).push(cat);
 }
 function initTreeState(checked) {
-  nodeState = {};
-  for (const cat of Object.keys(treeData?.nodes || {})) nodeState[cat] = checked ? 2 : 0;
+  nodeState = {}; ownState = {};
+  for (const cat of Object.keys(treeData?.nodes || {})) {
+    nodeState[cat] = checked ? 2 : 0;
+    ownState[cat]  = checked ? 2 : 0;
+  }
 }
+function hasOwnPages(cat) { return (treeData?.nodes?.[cat]?.own_pages || 0) > 0; }
 function setDescendants(cat, state, seen) {
   if (seen.has(cat)) return; seen.add(cat);
-  nodeState[cat] = state;
+  nodeState[cat] = state; ownState[cat] = state;
   for (const c of (treeData?.nodes?.[cat]?.children || [])) setDescendants(c, state, seen);
+}
+// A category is fully checked only when its own pages AND all its existing
+// subcategories are; unchecked only when none is; otherwise partial.
+function derivedState(cat) {
+  const node = treeData?.nodes?.[cat];
+  const parts = (node?.children || []).filter(c => treeData.nodes[c]).map(c => nodeState[c] ?? 0);
+  if (hasOwnPages(cat)) parts.push(ownState[cat] ?? 0);
+  if (!parts.length) return nodeState[cat] ?? 0;
+  return parts.every(s => s === 2) ? 2 : parts.every(s => s === 0) ? 0 : 1;
 }
 function recomputeAncestors(cat, seen) {
   if (seen.has(cat)) return; seen.add(cat);
   for (const parent of (parentMap[cat] || [])) {
-    const kids = treeData?.nodes?.[parent]?.children || [];
-    const st = kids.map(c => nodeState[c] ?? 0);
-    nodeState[parent] = st.every(s => s === 2) ? 2 : st.every(s => s === 0) ? 0 : 1;
+    nodeState[parent] = derivedState(parent);
     recomputeAncestors(parent, seen);
   }
+}
+function recomputeAll() {   // after restoring a saved selection (bounded: cycles)
+  const cats = Object.keys(treeData?.nodes || {});
+  for (let i = 0; i < 64; i++) {
+    let changed = false;
+    for (const c of cats) { const st = derivedState(c); if (st !== nodeState[c]) { nodeState[c] = st; changed = true; } }
+    if (!changed) break;
+  }
+}
+// Roots to display: the API's roots, plus one entry point for every category
+// that is otherwise unreachable (a cycle A->B->A has no root at all).
+function treeRoots() {
+  const nodes = treeData.nodes || {};
+  const roots = (treeData.roots || []).filter(c => nodes[c]);
+  const seen = new Set();
+  const walk = start => {
+    const stack = [start];
+    while (stack.length) {
+      const x = stack.pop(); if (seen.has(x)) continue; seen.add(x);
+      for (const k of (nodes[x]?.children || [])) if (nodes[k]) stack.push(k);
+    }
+  };
+  roots.forEach(walk);
+  for (const c of Object.keys(nodes).sort()) if (!seen.has(c)) { roots.push(c); walk(c); }
+  return roots;
 }
 function sortCats(cats) {
   const arr = [...cats];
@@ -1716,7 +1821,7 @@ function renderRoots() {
   ikCat = {}; ikAnc = {}; ikOpen = {}; ikPop = {}; ikCtr = 0;
   const body = document.getElementById("tree-body");
   if (!body) return;
-  const roots = sortCats(treeData.roots || []);
+  const roots = sortCats(treeRoots());
   body.innerHTML = roots.length
     ? roots.map(c => nodeHtml(c, new Set())).join("")
     : '<span class="l-dim">No root category.</span>';
@@ -1733,9 +1838,13 @@ async function loadTree(jobId) {
   const saved = allJobs[jobId]?.selection;
   if (saved && saved.length) {
     initTreeState(false);
+    const pre = treeData.own_prefix || "own:";
     const seen = new Set();
-    saved.forEach(c => setDescendants(c, 2, seen));
-    saved.forEach(c => recomputeAncestors(c, new Set()));
+    for (const entry of saved) {
+      if (treeData.nodes[entry]) setDescendants(entry, 2, seen);
+      else if (entry.startsWith(pre) && treeData.nodes[entry.slice(pre.length)]) ownState[entry.slice(pre.length)] = 2;
+    }
+    recomputeAll();
   } else {
     initTreeState(true);
   }
@@ -1805,8 +1914,16 @@ function filterTree(term) {
   body.innerHTML = html;
   applyCheckboxStates();
 }
+// Whole categories (state 2) + "own:<Cat>" for a partially checked category
+// that keeps its own pages (otherwise they would silently vanish).
 function selectedCats() {
-  return Object.entries(nodeState).filter(([, s]) => s === 2).map(([c]) => c);
+  const pre = treeData?.own_prefix || "own:";
+  const out = [];
+  for (const [c, s] of Object.entries(nodeState)) {
+    if (s === 2) out.push(c);
+    else if (s === 1 && hasOwnPages(c) && ownState[c] === 2) out.push(pre + c);
+  }
+  return out;
 }
 function updateGenInfo(preview) {
   const el = document.getElementById("gen-info"); if (!el) return;

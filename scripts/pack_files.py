@@ -24,6 +24,38 @@ import sys
 from pathlib import Path
 
 
+# A selection entry "own:<Category>" means that category's DIRECT pages only
+# (the UI emits it for a partially checked parent that keeps its own pages).
+OWN_PREFIX = "own:"
+
+
+def select_groups(groups: dict[str, list[str]], tree: dict,
+                  selection: list[str] | None) -> tuple[dict[str, list[str]], bool]:
+    """Applies the user's category selection. Returns (groups, covers_all).
+
+    - no selection  -> every group, covers_all=True
+    - "Cat"         -> the whole group (the category and all its descendants)
+    - "own:Cat"     -> only the pages directly in Cat (when Cat is not selected whole)
+    covers_all is True when no category was left out: pages without any
+    category (Misc) are then kept too, exactly like "generate everything".
+    Single source for generation (run.py) and the live preview (server.py).
+    """
+    if not selection:
+        return groups, True
+    sel = set(selection)
+    out = {k: v for k, v in groups.items() if k in sel}
+    nodes = tree.get("nodes", {})
+    for entry in selection:
+        if entry in groups or not entry.startswith(OWN_PREFIX):
+            continue
+        cat = entry[len(OWN_PREFIX):]
+        pages = nodes.get(cat, {}).get("pages")
+        if pages and cat not in out:
+            out[cat] = sorted(pages)
+    covers_all = bool(out) and set(groups) <= sel
+    return out, covers_all
+
+
 def _words_of(stems, page_words: dict[str, int]) -> int:
     return sum(page_words.get(s, 0) for s in stems)
 

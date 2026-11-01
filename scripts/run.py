@@ -18,6 +18,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+from pack_files import select_groups
 from wiki_names import MISC_CATEGORY, wiki_slug  # same dir, on sys.path
 
 PY = sys.executable
@@ -363,12 +364,15 @@ def main() -> int:
     if phase == "generate" and selection_file.exists() and selection_file.stat().st_size > 0:
         selected_groups = job_dir / "category_groups_selected.json"
         groups = json.loads(cat_groups.read_text(encoding="utf-8"))
-        sel = set(json.loads(selection_file.read_text(encoding="utf-8")) or [])
-        out = {k: v for k, v in groups.items() if k in sel} if sel else groups
+        selection = json.loads(selection_file.read_text(encoding="utf-8")) or []
+        tree = json.loads(tree_file.read_text(encoding="utf-8")) if tree_file.exists() else {}
+        out, covers_all = select_groups(groups, tree, selection)
         selected_groups.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
         log(f"  Selection: {len(out)}/{len(groups)} categories kept")
         cat_groups = selected_groups
-        add_divers = False
+        # Uncategorized pages follow "everything selected" like a full run;
+        # they are dropped only when the user actually left categories out.
+        add_divers = covers_all
 
     if tree_file.exists() and (int(max_files) > 0 or dedup):
         print()

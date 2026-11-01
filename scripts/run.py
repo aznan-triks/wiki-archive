@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 from pack_files import select_groups
-from wiki_names import MISC_CATEGORY, wiki_slug  # same dir, on sys.path
+from wiki_names import MISC_CATEGORY, output_folder  # same dir, on sys.path
 
 PY = sys.executable
 KNOWN_FORMATS = {"pdf", "md", "txt"}
@@ -143,8 +143,8 @@ def main() -> int:
     pdf_dir = job_dir / "pdf"
     flat_dir = job_dir / "flat"
 
-    slug = wiki_slug(wiki_api)
-    out_dir = data_dir / "output" / slug
+    out_dir = data_dir / "output" / output_folder(
+        wiki_api, job_dir.name, env_bool("OUTPUT_PER_JOB", False))
 
     print("=" * 44)
     print("  Wiki Archive Pipeline")
@@ -257,7 +257,8 @@ def main() -> int:
     extraction_marker = html_dir / EXTRACTION_MARKER
     if phase == "generate":
         log("↩ Skipped (generate phase)")
-    elif html_count > 0 and extraction_marker.exists():
+    elif (html_count > 0 and extraction_marker.exists()
+          and extraction_marker.read_text(encoding="utf-8").strip() == namespaces):
         skip_step(f"{html_count} HTML files already present")
     else:
         if html_count > 0:
@@ -277,7 +278,7 @@ def main() -> int:
                 log(f"⚠ FAILURE: extraction produced 0 HTML pages from {xml_file} "
                     f"(wrong namespaces? empty dump?) -- aborting, nothing to export")
                 return 1
-            extraction_marker.write_text("ok\n", encoding="utf-8")
+            extraction_marker.write_text(namespaces, encoding="utf-8")   # redo if it changes
             log(f"{html_count} HTML files generated")
 
     # ── 3. PDF conversion ────────────────────────────────────────────────────────

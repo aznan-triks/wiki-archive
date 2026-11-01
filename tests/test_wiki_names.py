@@ -63,7 +63,7 @@ def test_scripts_do_not_reimplement_the_naming_rules():
         "scripts/build_categories.py":   "page_stem",
         "scripts/export_categories.py":  "cat_stem",
         "scripts/merge_pdf.py":          "cat_stem",
-        "scripts/run.py":                "wiki_slug",
+        "scripts/run.py":                "output_folder",
     }
     for rel, helper in checks.items():
         src = (root / rel).read_text(encoding="utf-8")

@@ -41,6 +41,15 @@ regression test in `tests/test_audit_fixes.py`.
 - API: create/patch reject invalid numbers, booleans and formats with a 400
   instead of persisting them.
 
+### Added (settings, all off/unchanged by default)
+
+- "Separate output folder": a job writes to `data/output/<wiki>--<job>` and
+  never overwrites or deletes another job's files.
+- "Unique file names": titles with special characters get a short hash, so
+  `A/B` and `A:B` no longer collide (apply with a new dump).
+- The existing "Namespaces" setting now really selects what is extracted
+  (`0`, `0,14`, `all`); changing it re-runs the extraction.
+
 ### Security
 
 - Cross-site writes are refused (`Origin` must match `Host`): a web page could

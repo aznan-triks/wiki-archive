@@ -104,7 +104,7 @@ def test_no_api_mode_writes_one_file_per_category(tmp_path):
     (job / "html").mkdir()
     for t in ("Pistol", "Rifle", "Lore"):
         (job / "html" / f"{t}.html").write_text(_page(t), encoding="utf-8")
-    (job / "html" / ".extraction_complete").write_text("ok", encoding="utf-8")
+    (job / "html" / ".extraction_complete").write_text("0", encoding="utf-8")
     (job / "categories.json").write_text(
         json.dumps({"Pistol": ["Weapons"], "Rifle": ["Weapons"], "Lore": []}), encoding="utf-8")
 
@@ -169,7 +169,7 @@ def _extraction_job(tmp_path, marker: bool):
     (job / "html").mkdir()
     (job / "html" / "Alpha.html").write_text(_page("Alpha"), encoding="utf-8")   # interrupted run
     if marker:
-        (job / "html" / ".extraction_complete").write_text("ok", encoding="utf-8")
+        (job / "html" / ".extraction_complete").write_text("0", encoding="utf-8")
     return job
 
 
@@ -300,3 +300,63 @@ def test_invalid_job_parameters_are_refused_not_persisted(tmp_path):
     """)
     assert set(res["bad"].values()) == {400}
     assert (res["ok"], res["max_files"], res["jobs"]) == (200, 25, 1)
+
+
+# ── user-configurable behaviours (defaults keep the old behaviour) ─────────────
+def _extract(tmp_path, titles, **env):
+    pytest.importorskip("mwparserfromhell")
+    xml = tmp_path / "wiki.xml"
+    xml.write_text(_xml(*titles), encoding="utf-8")
+    dest = tmp_path / "html"
+    r = subprocess.run([sys.executable, str(EXTRACT), str(xml), str(dest), "", "0",
+                        str(tmp_path / "categories.json")],
+                       env={**os.environ, "PYTHONPATH": str(ROOT / "scripts"), **env},
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return r.stdout, sorted(p.name for p in dest.glob("*.html"))
+
+
+def test_unique_names_option_keeps_both_colliding_pages(tmp_path):
+    out, files = _extract(tmp_path, ["A/B", "A:B", "Plain"], UNIQUE_NAMES="true")
+    assert "COLLISION" not in out and len(files) == 3
+    assert "Plain.html" in files, "titles without special characters keep their name"
+
+
+def test_namespaces_setting_is_respected(tmp_path):
+    def xml_ns(ns_title):
+        pages = "".join(f"<page><title>{t}</title><ns>{n}</ns><revision><text>x</text></revision></page>"
+                        for n, t in ns_title)
+        return f'<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/">{pages}</mediawiki>'
+    pytest.importorskip("mwparserfromhell")
+    pages = [(0, "Article"), (1, "Talk:Article"), (14, "Category:Things")]
+    results = {}
+    for setting in ("0", "0,14", "all"):
+        d = tmp_path / setting.replace(",", "_")
+        d.mkdir()
+        (d / "w.xml").write_text(xml_ns(pages), encoding="utf-8")
+        r = subprocess.run([sys.executable, str(EXTRACT), str(d / "w.xml"), str(d / "html"), "", "0",
+                            str(d / "c.json")],
+                           env={**os.environ, "PYTHONPATH": str(ROOT / "scripts"), "NAMESPACES": setting},
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        results[setting] = len(list((d / "html").glob("*.html")))
+    assert results == {"0": 1, "0,14": 2, "all": 3}
+
+
+def test_output_per_job_option_gives_each_job_its_own_folder(tmp_path):
+    pytest.importorskip("bs4"); pytest.importorskip("markdownify")
+    job = tmp_path / "job"
+    (job / "html").mkdir(parents=True)
+    (job / "html" / "P.html").write_text(_page("P"), encoding="utf-8")
+    (job / "category_groups.json").write_text(json.dumps({"C": ["P"]}), encoding="utf-8")
+    shared = _run(tmp_path)
+    own = _run(tmp_path, OUTPUT_PER_JOB="true")
+    assert shared.returncode == own.returncode == 0
+    out = tmp_path / "data" / "output"
+    assert sorted(p.name for p in out.iterdir()) == ["wiki.test", "wiki.test--job"]
+
+
+def test_changing_namespaces_redoes_a_finished_extraction(tmp_path):
+    job = _extraction_job(tmp_path, marker=True)       # marker says namespaces "0"
+    r = _run(tmp_path, PHASE="scan", EXPORT_FORMATS="md", NAMESPACES="0,14")
+    assert "already present" not in r.stdout

@@ -232,3 +232,12 @@ def test_ui_launch_buttons_come_back_after_an_error(browser_page):
     page.evaluate("() => updateDetail({...allJobs['20261101-000000-test'], status: 'running'})")
     assert page.locator("#d-form button").count() == 0, "form must go away while running"
     assert errors == []
+
+
+def test_ui_form_exposes_the_new_options(browser_page):
+    page, errors = browser_page(tree=False)
+    assert page.locator("#f-perjob").count() == 1 and page.locator("#f-unique").count() == 1
+    page.check("#f-perjob")
+    params = page.evaluate("collectParams()")
+    assert params["output_per_job"] is True and params["unique_names"] is False
+    assert errors == []

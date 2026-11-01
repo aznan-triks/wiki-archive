@@ -74,6 +74,8 @@ DEFAULTS = {
     "notebooklm_max_words": int(os.getenv("NOTEBOOKLM_MAX_WORDS", "500000")),
     "dedup":                True,
     "cat_workers":          8,
+    "output_per_job":       False,   # True: data/output/<wiki>--<job> instead of one folder per wiki
+    "unique_names":         False,   # True: titles with special characters get a hash (no collisions)
 }
 
 # NotebookLM presets: sources (= files) per notebook. The word limit
@@ -178,7 +180,9 @@ class Job:
         except Exception:
             return self.id
 
-    def merged_dir(self) -> Path: return DATA_DIR / "output" / self.wiki_slug()
+    def merged_dir(self) -> Path:
+        return DATA_DIR / "output" / wiki_names.output_folder(
+            self.wiki_url, self.id, bool(self.params.get("output_per_job")))
 
     def _has_files(self, d: Path) -> bool:
         """True if the folder exists and contains at least one file (lightweight check)."""
@@ -230,7 +234,7 @@ class Job:
             "created_at":  self.created_at,
             "log_count":   len(self.logs),
             "files":       self._files_meta(),
-            "out_path":    _host_path(f"data/output/{self.wiki_slug()}"),
+            "out_path":    _host_path(f"data/output/{self.merged_dir().name}"),
             "steps":       STEPS,
             "has_tree":    self.category_tree_file().exists(),
             "data_present": self._has_files(self.html_dir()),
@@ -365,7 +369,7 @@ class JobManager:
         # (data/output/<slug>): remove it only with the wiki's last job, so
         # deleting a failed job cannot destroy another job's finished files.
         out = job.merged_dir()
-        shared = any(j.wiki_slug() == job.wiki_slug() for j in self._jobs.values())
+        shared = any(j.merged_dir() == out for j in self._jobs.values())
         if out.exists() and not shared:
             shutil.rmtree(out, ignore_errors=True)
         self._save()
@@ -497,6 +501,8 @@ class JobManager:
             "NOTEBOOKLM_MAX_WORDS": str(job.params.get("notebooklm_max_words", DEFAULTS["notebooklm_max_words"])),
             "DEDUP":            "true" if job.params.get("dedup", DEFAULTS["dedup"]) else "false",
             "CAT_WORKERS":      str(job.params.get("cat_workers", DEFAULTS["cat_workers"])),
+            "OUTPUT_PER_JOB":   "true" if job.params.get("output_per_job", DEFAULTS["output_per_job"]) else "false",
+            "UNIQUE_NAMES":     "true" if job.params.get("unique_names", DEFAULTS["unique_names"]) else "false",
             "PHASE":            phase,
             "SELECTION_FILE":   str(job.selection_file()),
             "DATA_DIR":         str(DATA_DIR),
@@ -1459,6 +1465,10 @@ function buildForm(job) {
       <div class="opt-group opt-check">
         <input type="checkbox" id="f-images" ${p.images ? "checked" : ""}/><span>Include images</span></div>
       <div class="opt-group opt-check">
+        <input type="checkbox" id="f-perjob" ${p.output_per_job ? "checked" : ""}/><span>Separate output folder <small style="color:var(--muted)">(this job won't overwrite another one's files)</small></span></div>
+      <div class="opt-group opt-check">
+        <input type="checkbox" id="f-unique" ${p.unique_names ? "checked" : ""}/><span>Unique file names <small style="color:var(--muted)">(no page lost when two titles look alike; needs a new dump)</small></span></div>
+      <div class="opt-group opt-check">
         <input type="checkbox" id="f-clean" ${p.clean ? "checked" : ""}/><span>New full dump <small class="danger">(wipes everything)</small></span></div>
       <div class="opt-group opt-check pdf-opt" style="${pdfStyle}">
         <input type="checkbox" id="f-rerender" ${p.rerender ? "checked" : ""}/><span>Re-render output</span></div>
@@ -1485,6 +1495,8 @@ function collectParams(base) {
     max_files:  Number.isFinite(mf) ? mf : (base.max_files ?? 50),
     dedup:      document.getElementById("f-dedup")?.checked ?? base.dedup ?? true,
     images:     document.getElementById("f-images")?.checked ?? true,
+    output_per_job: document.getElementById("f-perjob")?.checked ?? base.output_per_job ?? false,
+    unique_names:   document.getElementById("f-unique")?.checked ?? base.unique_names ?? false,
     clean:      document.getElementById("f-clean")?.checked ?? false,
     rerender:   document.getElementById("f-rerender")?.checked ?? false,
     force:      document.getElementById("f-force")?.checked ?? true,

@@ -9,6 +9,7 @@ Text mode : fallback if the API is unavailable - basic wikitext->HTML conversion
 Writes categories.json : { "safe_filename": ["Cat1", "Cat2", ...], ... }
 """
 import json
+import os
 import re
 import sys
 import time
@@ -30,7 +31,10 @@ CATS_FILE   = pathlib.Path(sys.argv[5]) if len(sys.argv) > 5 else DEST.parent / 
 DEST.mkdir(parents=True, exist_ok=True)
 
 NS_MW   = "http://www.mediawiki.org/xml/export-0.11/"
-KEEP_NS = {"0"}
+# Namespaces to archive: the job's NAMESPACES setting ("0" = articles only,
+# "0,14" adds category pages, "all" keeps everything). Default "0".
+_NS_SETTING = os.getenv("NAMESPACES", "0").strip().lower()
+KEEP_NS = None if _NS_SETTING in ("all", "*") else {n.strip() for n in _NS_SETTING.split(",") if n.strip()} or {"0"}
 
 SESSION = requests.Session()
 SESSION.headers.update({
@@ -229,7 +233,7 @@ for event, elem in ET.iterparse(XML_FILE, events=("end",)):
     elif tag == f"{{{NS_MW}}}ns":    _ns    = elem.text or "0"
     elif tag == f"{{{NS_MW}}}text":  _text  = elem.text or ""
     elif tag == f"{{{NS_MW}}}page":
-        if _ns in KEEP_NS and _title:
+        if (KEEP_NS is None or _ns in KEEP_NS) and _title:
             safe    = page_stem(_title)
             outfile = DEST / f"{safe}.html"
 

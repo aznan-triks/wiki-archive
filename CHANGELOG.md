@@ -31,6 +31,16 @@ regression test in `tests/test_audit_fixes.py`.
   (`A/B` vs `A:B`) instead of dropping them silently (fix of the naming itself
   is still open).
 
+- Category selection: unchecking a subcategory no longer drops its parent's own
+  pages (partial parents emit `own:<Category>`); selecting every category keeps
+  uncategorized pages like "generate everything"; categories that only form a
+  cycle are reachable in the tree; the preview now counts the `Misc` file.
+- UI: the launch buttons come back when a job ends in error/stopped/purged while
+  open (the log promised a "Resume" that did not exist); the generation panel
+  hides once its data was freed; Scan refuses an empty format choice.
+- API: create/patch reject invalid numbers, booleans and formats with a 400
+  instead of persisting them.
+
 ### Security
 
 - Cross-site writes are refused (`Origin` must match `Host`): a web page could

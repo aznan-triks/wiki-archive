@@ -10,12 +10,10 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 import time
-import unicodedata
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +21,8 @@ from pathlib import Path
 from wiki_names import MISC_CATEGORY, wiki_slug  # same dir, on sys.path
 
 PY = sys.executable
+KNOWN_FORMATS = {"pdf", "md", "txt"}
+EXTRACTION_MARKER = ".extraction_complete"   # lives in html/, wiped with it
 SCRIPTS_DIR = Path(__file__).resolve().parent
 
 
@@ -70,31 +70,6 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     """subprocess.run with live (inherited) output, failure = CalledProcessError."""
     log(f"Running: {' '.join(cmd)}")
     return subprocess.run(cmd, check=True, **kw)
-
-
-def flatten(src: Path, dest: Path, ext: str) -> int:
-    """Flat-copy every *ext* file from src to dest, flattening subfolders into
-    the filename and normalizing to ASCII (pure Python, no coreutils)."""
-    dest.mkdir(parents=True, exist_ok=True)
-    count = 0
-    for f in sorted(src.rglob(f"*{ext}")):
-        if not f.is_file():
-            continue
-        rel = f.relative_to(src).as_posix()
-        ascii_name = unicodedata.normalize("NFKD", rel).encode("ascii", "ignore").decode("ascii")
-        flat = ascii_name.replace("/", "__")
-        flat = re.sub(r"[^A-Za-z0-9._-]", "_", flat)[:180]
-        target = dest / flat
-        if target.exists():
-            stem, suffix = target.stem, target.suffix
-            i = 1
-            while (dest / f"{stem}_{i}{suffix}").exists():
-                i += 1
-            target = dest / f"{stem}_{i}{suffix}"
-        shutil.copy2(f, target)
-        count += 1
-    log(f"✓ Flattened: {count} files")
-    return count
 
 
 def config_field(config_json: Path, *keys: str) -> str:
@@ -151,6 +126,13 @@ def main() -> int:
     if export_formats == "all":
         export_formats = "pdf,md,txt"
     formats_list = [f for f in export_formats.split(",") if f]
+    # Fail Fast BEFORE anything destructive: an empty/unknown format used to
+    # wipe the previous output and then fail with "0 output files".
+    unknown = [f for f in formats_list if f not in KNOWN_FORMATS]
+    if not formats_list or unknown:
+        log(f"⚠ FAILURE: invalid export format(s) {export_formats!r} -- "
+            f"choose among: {', '.join(sorted(KNOWN_FORMATS))}")
+        return 1
     want_pdf = "pdf" in formats_list
     doc_formats = ",".join(f for f in formats_list if f != "pdf")
     want_docs = bool(doc_formats)
@@ -271,11 +253,17 @@ def main() -> int:
     categories_file = job_dir / "categories.json"
 
     html_count = len(list(html_dir.glob("*.html"))) if html_dir.exists() else 0
+    extraction_marker = html_dir / EXTRACTION_MARKER
     if phase == "generate":
         log("↩ Skipped (generate phase)")
-    elif html_count > 0:
+    elif html_count > 0 and extraction_marker.exists():
         skip_step(f"{html_count} HTML files already present")
     else:
+        if html_count > 0:
+            # An interrupted extraction leaves some pages on disk: skipping the
+            # step would silently archive an incomplete wiki. extract.py is
+            # resumable (existing pages are not fetched again).
+            log(f"↻ Extraction incomplete or unverified ({html_count} pages on disk) -- resuming")
         with Step():
             if api_url:
                 log(f"Render API: {api_url}")
@@ -288,6 +276,7 @@ def main() -> int:
                 log(f"⚠ FAILURE: extraction produced 0 HTML pages from {xml_file} "
                     f"(wrong namespaces? empty dump?) -- aborting, nothing to export")
                 return 1
+            extraction_marker.write_text("ok\n", encoding="utf-8")
             log(f"{html_count} HTML files generated")
 
     # ── 3. PDF conversion ────────────────────────────────────────────────────────
@@ -295,8 +284,8 @@ def main() -> int:
     print("━━━ [3/5] PDF CONVERSION ━━━")
 
     pdf_count = len(list(pdf_dir.glob("*.pdf"))) if pdf_dir.exists() else 0
-    if phase in ("scan", "generate"):
-        log(f"↩ Skipped (phase {phase})")
+    if phase == "scan":
+        log("↩ Skipped (scan phase -- PDFs are made at generation)")
     elif not want_pdf:
         log("Skipped -- PDF format not requested")
     elif pdf_count >= html_count and pdf_count > 0:
@@ -307,6 +296,10 @@ def main() -> int:
             run([PY, str(SCRIPTS_DIR / "convert.py"), str(html_dir), str(pdf_dir), workers])
             pdf_count = len(list(pdf_dir.glob("*.pdf")))
             log(f"{pdf_count} PDFs -- total size: {human_size(pdf_dir)}")
+            if pdf_count == 0:
+                log("⚠ FAILURE: no PDF could be produced -- on Windows the GTK3 "
+                    "runtime is required (Markdown/text exports work without it)")
+                return 1
 
     # ── 4. category hierarchy ───────────────────────────────────────────────────
     print()
@@ -343,17 +336,17 @@ def main() -> int:
                 for stem, cats in page_cats.items():
                     for cat in (cats or [MISC_CATEGORY]):
                         groups[cat].append(stem)
+                cat_groups.write_text(
+                    json.dumps({k: sorted(v) for k, v in groups.items()}, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                log(f"  {len(groups)} categories")
             else:
                 # Clear, actionable message instead of a raw FileNotFoundError
                 # traceback in the UI log.
                 log(f"⚠ FAILURE: {categories_file} not found -- delete the 'html' "
                     f"folder of this job (or check 'New dump') and re-run extraction")
                 return 1
-                cat_groups.write_text(
-                    json.dumps({k: sorted(v) for k, v in groups.items()}, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-                log(f"  {len(groups)} categories")
 
     # ── stop after scan ──────────────────────────────────────────────────────────
     if phase == "scan":
@@ -389,39 +382,54 @@ def main() -> int:
             cat_groups = packed_groups
 
     # ── 5. per-category file production ─────────────────────────────────────────
+    # Built in a sibling staging folder; the previous output is replaced only
+    # once the new one is complete (a failed run no longer wipes it).
     print()
     print("━━━ [5/5] PER-CATEGORY FILE PRODUCTION ━━━")
-    with Step():
-        log(f"Cleaning previous output: {out_dir}")
-        shutil.rmtree(flat_dir, ignore_errors=True)
-        shutil.rmtree(out_dir, ignore_errors=True)
-        out_dir.mkdir(parents=True, exist_ok=True)
+    stage_dir = out_dir.parent / f"{out_dir.name}.partial"
+    shutil.rmtree(stage_dir, ignore_errors=True)
+    stage_dir.mkdir(parents=True)
+    produced_ok = False
+    try:
+        with Step():
+            os.environ["ADD_DIVERS"] = "true" if add_divers else "false"
 
-        os.environ["ADD_DIVERS"] = "true" if add_divers else "false"
+            if want_pdf:
+                log(f"PDF: one file per category (max {max_pdf} pages)")
+                # PDFs are read in place: their names are the page stems used
+                # by category_groups.json (spaces and accents included).
+                run([PY, str(SCRIPTS_DIR / "merge_pdf.py"), str(pdf_dir), str(stage_dir), max_pdf, str(cat_groups)])
 
-        if want_pdf:
-            log(f"PDF: one file per category (max {max_pdf} pages)")
-            flatten(pdf_dir, flat_dir, ".pdf")
-            run([PY, str(SCRIPTS_DIR / "merge_pdf.py"), str(flat_dir), str(out_dir), max_pdf, str(cat_groups)])
+            if want_docs:
+                log(f"Text ({doc_formats}): one file per category")
+                # Fail Fast: a crashed text export must fail the job -- swallowing
+                # it here marked the job "done" while the requested .md/.txt files
+                # were simply missing (PDFs may stay unaffected, but the user
+                # asked for these formats).
+                run([PY, str(SCRIPTS_DIR / "export_categories.py"), str(html_dir), str(cat_groups), str(stage_dir), doc_formats])
 
-        if want_docs:
-            log(f"Text ({doc_formats}): one file per category")
-            # Fail Fast: a crashed text export must fail the job -- swallowing
-            # it here marked the job "done" while the requested .md/.txt files
-            # were simply missing (PDFs may stay unaffected, but the user
-            # asked for these formats).
-            run([PY, str(SCRIPTS_DIR / "export_categories.py"), str(html_dir), str(cat_groups), str(out_dir), doc_formats])
+        produced_ok = any(f.is_file() for f in stage_dir.glob("*"))
+    finally:
+        if not produced_ok:
+            shutil.rmtree(stage_dir, ignore_errors=True)
 
-    produced = [f for f in sorted(out_dir.glob("*")) if f.is_file()]
-    if not produced:
-        # Fail Fast: the output was wiped at step 5 and nothing replaced it --
-        # report a failure instead of a "COMPLETE" banner with an empty folder.
+    if not produced_ok:
+        # Fail Fast: report a failure instead of a "COMPLETE" banner over an
+        # empty folder. The previous output (if any) is untouched.
         print()
         print("=" * 44)
-        print("  ⚠ FAILURE: pipeline produced 0 output files in " + str(out_dir))
+        print("  ⚠ FAILURE: pipeline produced 0 output files (previous output kept)")
         print("=" * 44)
         return 1
 
+    log(f"Replacing previous output: {out_dir}")
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for f in sorted(stage_dir.glob("*")):
+        shutil.move(str(f), str(out_dir / f.name))
+    shutil.rmtree(stage_dir, ignore_errors=True)
+
+    produced = [f for f in sorted(out_dir.glob("*")) if f.is_file()]
     print()
     print("=" * 44)
     print(f"  ✓ PIPELINE COMPLETE -- {datetime.now():%Y-%m-%d %H:%M:%S}")

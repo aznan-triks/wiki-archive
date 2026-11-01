@@ -220,6 +220,8 @@ count = resumed = skipped = api_ok = fallback_ok = 0
 t0 = time.time()
 _title = _ns = _text = None
 SAVE_EVERY = 50   # save categories.json every N articles
+seen_stems: dict[str, str] = {}   # file stem -> first title that claimed it
+collisions: list[tuple[str, str]] = []
 
 for event, elem in ET.iterparse(XML_FILE, events=("end",)):
     tag = elem.tag
@@ -230,6 +232,18 @@ for event, elem in ET.iterparse(XML_FILE, events=("end",)):
         if _ns in KEEP_NS and _title:
             safe    = page_stem(_title)
             outfile = DEST / f"{safe}.html"
+
+            # Two titles can map to the same file name (e.g. "A/B" and "A:B"):
+            # the second would be mistaken for an already-extracted page and
+            # silently dropped. Keep the first, but say so.
+            first = seen_stems.setdefault(safe, _title)
+            if first != _title:
+                collisions.append((first, _title))
+                print(f"  ⚠ NAME COLLISION: {_title!r} maps to the same file as "
+                      f"{first!r} -- the page is NOT archived", flush=True)
+                elem.clear()
+                _title = _ns = _text = None
+                continue
 
             if outfile.exists():
                 resumed += 1
@@ -272,3 +286,6 @@ rate    = count / elapsed if elapsed > 0 else 0
 print(f"✓ {count} new ({api_ok} api / {fallback_ok} txt) + {resumed} resumed"
       f" in {elapsed:.1f}s ({rate:.1f}/s) - {skipped} skipped", flush=True)
 print(f"  categories.json: {len(categories)} pages indexed -> {CATS_FILE}", flush=True)
+if collisions:
+    print(f"  ⚠ {len(collisions)} page(s) skipped because their file name collides "
+          f"with another page's", flush=True)

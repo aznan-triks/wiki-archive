@@ -100,6 +100,10 @@ docker compose exec wiki-archive \
 
 Go to **http://localhost:8080** after `docker compose up -d`.
 
+The interface has no password, so the port is published on this machine only
+(`127.0.0.1`). To open it to other devices on your network, put
+`PUBLISH_HOST=0.0.0.0` in `.env` -- only on a network you trust.
+
 ### Create a job
 1. Click **"+ New"**
 2. Enter the wiki URL (any page)

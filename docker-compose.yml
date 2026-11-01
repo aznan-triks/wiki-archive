@@ -10,5 +10,10 @@ services:
       # the interface shows the full path to the export folder, ready to
       # paste into Explorer. Leave empty for a relative path.
       HOST_PROJECT_DIR: "${HOST_PROJECT_DIR:-}"
+      # Listen on all interfaces INSIDE the container (required for the
+      # published port to work); exposure is decided by the port line below.
+      BIND_HOST: "0.0.0.0"
     ports:
-      - "8080:8080"
+      # The interface has no authentication: published on this machine only.
+      # To reach it from another device, set PUBLISH_HOST=0.0.0.0 in .env.
+      - "${PUBLISH_HOST:-127.0.0.1}:8080:8080"

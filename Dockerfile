@@ -28,7 +28,7 @@ COPY scripts/ /scripts/
 # Convert Windows -> Unix line endings for all scripts
 RUN dos2unix /scripts/*.py && chmod +x /scripts/*.py
 
-ENV SCRIPTS_DIR=/scripts DATA_DIR=/data PYTHONUTF8=1
+ENV SCRIPTS_DIR=/scripts DATA_DIR=/data PYTHONUTF8=1 BIND_HOST=0.0.0.0
 EXPOSE 8080
 # dos2unix at startup to handle Windows line endings on mounted volumes
 CMD ["bash", "-c", "dos2unix /scripts/*.py 2>/dev/null; exec python /app/server.py"]

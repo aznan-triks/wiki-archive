@@ -20,9 +20,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 # -- configuration --------------------------------------------------------------
 # In Docker, SCRIPTS_DIR/DATA_DIR are fixed by the mount (/scripts, /data) --
@@ -35,6 +36,10 @@ JOBS_DIR    = DATA_DIR / "jobs"
 JOBS_FILE   = DATA_DIR / "jobs.json"
 PIPELINE    = SCRIPTS_DIR / "run.py"
 PORT        = int(os.getenv("PORT", 8080))
+# Local tool without authentication: listen on this machine only by default.
+# Docker sets BIND_HOST=0.0.0.0 (container side; the host port stays on
+# 127.0.0.1 unless PUBLISH_HOST is changed in docker-compose.yml).
+BIND_HOST   = os.getenv("BIND_HOST", "127.0.0.1")
 HOST_PROJECT_DIR = os.getenv("HOST_PROJECT_DIR", "").strip()
 
 # Shared naming rules (same module as the pipeline scripts -- the output
@@ -354,12 +359,15 @@ class JobManager:
             shutil.rmtree(job.job_dir())
         if job.log_file().exists():
             job.log_file().unlink()
-        # Also delete the final output (one per wiki_slug)
-        out = job.merged_dir()
-        if out.exists():
-            shutil.rmtree(out, ignore_errors=True)
         with self._lock:
             del self._jobs[job_id]
+        # The final output is shared by every job of the same wiki
+        # (data/output/<slug>): remove it only with the wiki's last job, so
+        # deleting a failed job cannot destroy another job's finished files.
+        out = job.merged_dir()
+        shared = any(j.wiki_slug() == job.wiki_slug() for j in self._jobs.values())
+        if out.exists() and not shared:
+            shutil.rmtree(out, ignore_errors=True)
         self._save()
 
     def bulk_delete(self, ids: list[str]) -> int:
@@ -493,6 +501,12 @@ class JobManager:
             "SELECTION_FILE":   str(job.selection_file()),
             "DATA_DIR":         str(DATA_DIR),
         }
+        # clean / rerender are one-shot: left on, every later Resume would wipe
+        # the data it is meant to continue from. (Generation ignores them, so
+        # they are kept for the next scan.)
+        if phase != "generate" and (job.params.get("clean") or job.params.get("rerender")):
+            job.params = {**job.params, "clean": False, "rerender": False}
+            self._save()
         try:
             proc = subprocess.Popen(
                 [sys.executable, str(PIPELINE)],
@@ -577,6 +591,23 @@ def _packing_preview(job: Job, selection: Optional[list[str]], max_files: int) -
 
 # -- app & routes ---------------------------------------------------------------
 app = FastAPI(title="Wiki Archive")
+
+_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def reject_cross_site_writes(request: Request, call_next):
+    """CSRF guard: a page on another site must not be able to drive this app
+    (create/delete jobs...) through the user's browser. Browsers always send
+    `Origin` on cross-origin writes; it must match the Host being called.
+    Requests without Origin (curl, scripts) are not browser-driven -- allowed."""
+    if request.method in _UNSAFE_METHODS:
+        origin = request.headers.get("origin")
+        if origin is not None:
+            origin_host = urlparse(origin).netloc
+            if origin_host != request.headers.get("host", ""):
+                return JSONResponse({"error": "Cross-site request refused."}, status_code=403)
+    return await call_next(request)
 
 
 @app.get("/api/jobs")
@@ -1954,4 +1985,4 @@ boot();
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    uvicorn.run(app, host=BIND_HOST, port=PORT)

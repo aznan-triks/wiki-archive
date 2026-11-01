@@ -5,7 +5,40 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 2026-09-06
+## [Unreleased] — 2026-11-01
+
+Audit follow-up. Only findings reproduced on the code were fixed; each has a
+regression test in `tests/test_audit_fixes.py`.
+
+### Fixed
+
+- PDF: the default Scan -> Generate path ended with "0 output files" because
+  PDFs were converted in neither phase. Generation now converts missing PDFs.
+- PDF: pages with a space or accent in their title (`Assault Rifle`, `Épée`)
+  were renamed to ASCII before the merge and all fell into `Misc.pdf`. PDFs are
+  now merged in place under their real names (`flatten()` removed).
+- No-API fallback: the per-category grouping was dead code after a `return 1`;
+  the job produced a single `Misc` file and reported success.
+- A failed or invalid generation no longer wipes the previous output: files are
+  built in `<slug>.partial` and swapped in only on success. An empty or unknown
+  export format now fails before touching anything.
+- Resume: `clean` / `rerender` are one-shot (they stayed on and erased the data
+  of every later Resume); an interrupted HTML extraction is resumed instead of
+  being treated as complete (`html/.extraction_complete` marks a finished one).
+- Deleting a job no longer deletes `data/output/<wiki>` while another job of the
+  same wiki exists.
+- `extract.py` reports pages whose file name collides with another page
+  (`A/B` vs `A:B`) instead of dropping them silently (fix of the naming itself
+  is still open).
+
+### Security
+
+- Cross-site writes are refused (`Origin` must match `Host`): a web page could
+  delete every job through the user's browser.
+- The server listens on `127.0.0.1` by default (`BIND_HOST`); `docker-compose.yml`
+  publishes the port on `127.0.0.1` (`PUBLISH_HOST=0.0.0.0` in `.env` to open it).
+
+## [Earlier] — 2026-09-06
 
 Audit + fixes pass (pipeline stages fail fast, no duplicate conversion logic,
 no hardcoded naming rules).

@@ -1,14 +1,36 @@
-.venv/
+# Python & Virtual environments
 __pycache__/
 scripts/__pycache__/
-*.pyc
-.env
+tests/__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Pipeline data & generated output
 data/
 
-# AI context files (private)
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Ephemeral patches & diffs
+*.patch
+*.diff
+
+# Tool-specific caches & local backups
 CLAUDE.md
-CONTEXT.md
 MEMORY.md
-_backup_methode_2026-09-28/
-NEXT_SESSION.md
-AGENTS.md
+memory/
+.claude/
+.agents/
+_backup_*/
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

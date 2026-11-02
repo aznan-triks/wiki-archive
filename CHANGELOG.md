@@ -5,167 +5,90 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 2026-11-01
-
-Audit follow-up. Only findings reproduced on the code were fixed; each has a
-regression test in `tests/test_audit_fixes.py`.
-
-### Fixed
-
-- PDF: the default Scan -> Generate path ended with "0 output files" because
-  PDFs were converted in neither phase. Generation now converts missing PDFs.
-- PDF: pages with a space or accent in their title (`Assault Rifle`, `Épée`)
-  were renamed to ASCII before the merge and all fell into `Misc.pdf`. PDFs are
-  now merged in place under their real names (`flatten()` removed).
-- No-API fallback: the per-category grouping was dead code after a `return 1`;
-  the job produced a single `Misc` file and reported success.
-- A failed or invalid generation no longer wipes the previous output: files are
-  built in `<slug>.partial` and swapped in only on success. An empty or unknown
-  export format now fails before touching anything.
-- Resume: `clean` / `rerender` are one-shot (they stayed on and erased the data
-  of every later Resume); an interrupted HTML extraction is resumed instead of
-  being treated as complete (`html/.extraction_complete` marks a finished one).
-- Deleting a job no longer deletes `data/output/<wiki>` while another job of the
-  same wiki exists.
-- `extract.py` reports pages whose file name collides with another page
-  (`A/B` vs `A:B`) instead of dropping them silently (fix of the naming itself
-  is still open).
-
-- Category selection: unchecking a subcategory no longer drops its parent's own
-  pages (partial parents emit `own:<Category>`); selecting every category keeps
-  uncategorized pages like "generate everything"; categories that only form a
-  cycle are reachable in the tree; the preview now counts the `Misc` file.
-- UI: the launch buttons come back when a job ends in error/stopped/purged while
-  open (the log promised a "Resume" that did not exist); the generation panel
-  hides once its data was freed; Scan refuses an empty format choice.
-- API: create/patch reject invalid numbers, booleans and formats with a 400
-  instead of persisting them.
-
-### Added (settings, all off/unchanged by default)
-
-- "Separate output folder": a job writes to `data/output/<wiki>--<job>` and
-  never overwrites or deletes another job's files.
-- "Unique file names": titles with special characters get a short hash, so
-  `A/B` and `A:B` no longer collide (apply with a new dump).
-- The existing "Namespaces" setting now really selects what is extracted
-  (`0`, `0,14`, `all`); changing it re-runs the extraction.
-
-- PDF generation converts only the pages the files will contain, not the whole wiki.
-- Extraction accepts every MediaWiki export schema version (it only matched `export-0.11`);
-  `Namespaces = all` no longer passes an invalid value to the dump tool.
-- Settings are validated like jobs; a delay of `0` can be set; the default format
-  list can no longer be saved empty.
-
-- Review follow-up: the staging folder is per job (two jobs of one wiki no longer wipe
-  each other's); the old output is renamed aside before the swap; a refused value now
-  shows its message instead of a dead button; the extraction marker also records
-  "Unique file names" (changing it after extraction is refused until a new dump);
-  once a job has output, its output folder cannot move (files would be orphaned);
-  huge numbers give a 400 instead of a 500; dead `flat/` code removed.
-
-### Security
-
-- Cross-site writes are refused (`Origin` must match `Host`): a web page could
-  delete every job through the user's browser.
-- The server listens on `127.0.0.1` by default (`BIND_HOST`); `docker-compose.yml`
-  publishes the port on `127.0.0.1` (`PUBLISH_HOST=0.0.0.0` in `.env` to open it).
-
-## [Earlier] — 2026-09-06
-
-Audit + fixes pass (pipeline stages fail fast, no duplicate conversion logic,
-no hardcoded naming rules).
-
-### Fixed
-
-- `scripts/merge_pdf.py`: split categories produced chained part names
-  (`Weapons_part1_part2.pdf`, `Weapons_part1_part2_part3.pdf`, ...) because
-  the loop reassigned the output path before naming the next chunk. Names are
-  now computed from a fixed base: `Weapons_part1.pdf`, `Weapons_part2.pdf`, ...
-- `scripts/merge_pdf.py`: exit with code 1 when any category merge failed
-  (previously the script always exited 0, so a merge crash never failed the job).
-- Fail Fast across the pipeline (failed steps now abort explicitly instead of
-  completing with silently corrupt/missing output):
-  - `scripts/run.py` step 5: a crashed text export (`.md`/`.txt`) is fatal
-    instead of a `⚠ Text export failed (PDFs unaffected)` warning + success.
-  - `scripts/run.py` step 4: word-count measurement failure is fatal instead
-    of continuing with all weights at 0 (which defeats the NotebookLM
-    per-file limits).
-  - `scripts/run.py`: abort when extraction produced 0 HTML pages, and when
-    the pipeline produced 0 output files (instead of a `PIPELINE COMPLETE`
-    banner over an empty folder).
-  - `scripts/build_categories.py`: category API errors no longer degrade to a
-    silently incomplete grouping; failed reads are collected and the scan exits 1.
-  - `scripts/export_categories.py` / `scripts/merge_pdf.py`: an unreadable
-    (corrupt) `category_groups.json` is fatal instead of dumping every page
-    into one giant "everything" file.
-- Uncategorized pages: code emitted the French `Divers` while the README
-  documents `Misc.{ext}`; both now use a single English, env-configurable
-  constant `MISC_CATEGORY` (default `Misc`) from `scripts/wiki_names.py`.
-- `server.py`: `NOTEBOOKLM_MAX_WORDS` / `MAX_FILES` set in `.env` /
-  docker-compose were read but then overridden by hardcoded `DEFAULTS`, so the
-  pipeline never saw them. `DEFAULTS` now sources both from the environment,
-  and every job inherits them (single source: `server.py` → job env →
-  `run.py` → `pack_files.py`).
-- `server.py`: corrupt `data/settings.json` was ignored with `except: pass`
-  (saved settings vanished on every restart, unexplained); it is now logged.
-  A failed `pack_files` import is likewise logged instead of silently skewing
-  the packing preview.
-- `server.py` `_packing_preview()`: unreadable `category_tree.json` /
-  `page_words.json` silently fell back to `{}` and could preview different
-  results than the actual generation; the preview now returns a clear error.
-- `scripts/extract.py`: the switch to text mode after 5 consecutive API
-  failures was completely silent; the first API error and the mode switch are
-  now logged (the README troubleshooting table points users at exactly this).
-- `scripts/extract.py`: the resume path back-fetched missing categories
-  without the configured `DELAY` (ignored the polite rate limit) and could
-  keep hammering a dead API; it now honors the delay and the failure cap.
-- `scripts/run.py`: standalone `MAX_PDF` fallback was 100 while the README
-  config table (and `server.py` `DEFAULTS`) documents 500 — aligned to 500;
-  the UI form in `server.py` had the same stale `|| 100` fallback.
-- `scripts/run.py`: a failing pipeline step logged
-  `Failure in <python-interpreter>` (cmd[0]) — it now logs the full failing
-  command, so the log says *which* step died.
-- `scripts/run.py` `human_size()`: printed French units (`Ko`/`Mo`/`Go`/`To`)
-  in job logs while the UI showed KB/MB/GB — unified to English units.
-- `scripts/export_categories.py` / `scripts/merge_pdf.py`: stale comments and
-  docstrings referring to `run.sh` (removed) and to `categories.json` (the
-  argument is actually `category_groups.json`) corrected.
-- `README.md`: data-layout fixed — job logs live next to the job folder
-  (`jobs/<id>.log`, not inside it); `category_tree.json` and
-  `page_words.json` added to the documented job layout.
+## [1.1.0] - 2026-11-02
 
 ### Added
 
-- `scripts/wiki_names.py`: single source of truth for the naming rules that
-  were duplicated in 6 places (`page_stem`, `cat_stem`, `wiki_slug`,
-  `MISC_CATEGORY`). Used by `extract.py`, `build_categories.py`,
-  `export_categories.py`, `merge_pdf.py`, `run.py` and `server.py` — drift
-  between these silently broke grouping and output paths.
-- `tests/` + `pytest.ini` + `requirements-dev.txt`: 28 automated tests
-  covering every behavior fixed above (no network required; run with
-  `python -m pytest`).
-- `Dockerfile`: `dos2unix`/`chmod` steps now target only `*.py` (the shell
-  scripts they referenced no longer exist — they would have broken the build).
+**Plain words:**
+New optional settings allow jobs to output to isolated folders, assign collision-proof filenames for pages with special characters, and filter extracted content by MediaWiki namespaces.
+
+**Technical:**
+- Add "Separate output folder" toggle (`output_per_job`) writing output under `data/output/<wiki>--<job>`.
+- Add "Unique file names" option (`unique_names`) using hashes to prevent special characters and slash collisions.
+- Add working namespace selection (`namespaces`) supporting `0`, `0,14`, and `all`, triggering re-extraction when modified.
+
+### Changed
+
+**Plain words:**
+PDF generation is now targeted only to pages included in the selected export categories instead of converting the entire wiki, and file output updates are atomic.
+
+**Technical:**
+- Selective PDF conversion: only pages targeted by active category exports are converted to PDF.
+- Support arbitrary MediaWiki export schema versions beyond `export-0.11`.
+- Safe output swap: staging folders are isolated per job, and existing outputs are safely renamed aside before replacement.
+
+### Fixed
+
+**Plain words:**
+Fixed several pipeline bugs where PDF generation yielded empty output files, category selection dropped parent page content, and interrupted extractions failed to resume properly.
+
+**Technical:**
+- Convert missing PDFs during generation when skipped during initial scanning.
+- Preserve multi-word and accented page titles (`Assault Rifle`, `Épée`) without flattening to ASCII, ensuring proper category assignment.
+- Fix dead code in the no-API category grouping fallback that produced empty or generic Misc outputs.
+- Category tree selection retains direct pages of partially selected parents using `own:<Category>` tags.
+- Generation failures no longer erase existing outputs; builds take place in `<slug>.partial` and commit only on success.
+- Resume mode no longer persists one-shot `clean` and `rerender` flags across subsequent runs.
+- Prevent job deletion from removing outputs shared by concurrent jobs of the same wiki.
+- API validation rejects invalid numeric, boolean, or format settings with HTTP 400 instead of crashing or persisting bad state.
+
+### Security
+
+**Plain words:**
+Hardened the local web server against unauthorized cross-site requests and restricted external network exposure by default.
+
+**Technical:**
+- Refuse cross-origin mutation requests by verifying the `Origin` header matches `Host`.
+- Bind server and Docker port publishing to `127.0.0.1` by default (`BIND_HOST` / `PUBLISH_HOST`).
+
+## [1.0.0] - 2026-09-06
+
+### Fixed
+
+**Plain words:**
+Unified pipeline naming rules, fixed split-part PDF naming, and enforced strict fail-fast behavior so errors stop the process instead of producing silently corrupt files.
+
+**Technical:**
+- `scripts/merge_pdf.py`: compute split part names from a fixed base (`Weapons_part1.pdf`, `Weapons_part2.pdf`) instead of chained prefixes; exit with code 1 on merge failure.
+- Fail Fast across pipeline: abort on crashed text exports, word-count failures, 0 extracted pages, 0 produced files, or corrupt category grouping.
+- Uncategorized pages: unify French `Divers` to English, env-configurable `MISC_CATEGORY` (default `Misc`).
+- `server.py`: pass `NOTEBOOKLM_MAX_WORDS` and `MAX_FILES` from environment down to pipeline; log corrupt `settings.json` and failed imports.
+- `scripts/extract.py`: log API text-mode fallback and honor rate limits (`DELAY`) during resume backfill.
+- Align `MAX_PDF` fallback to 500 across UI, server, and scripts; log full failing command on step failures; unify sizes to English units (KB/MB/GB).
+
+### Added
+
+**Plain words:**
+Introduced a centralized naming helper and a comprehensive automated test suite.
+
+**Technical:**
+- `scripts/wiki_names.py`: single source of truth for `page_stem`, `cat_stem`, `wiki_slug`, and `MISC_CATEGORY`.
+- `tests/` + `pytest.ini` + `requirements-dev.txt`: 28 automated tests covering pipeline stages and naming rules.
+- `Dockerfile`: target `*.py` scripts exclusively for dos2unix and executable permissions.
 
 ### Removed
 
-- `extract.py` (repo root): stale duplicate of `scripts/extract.py` with a
-  different, older extraction logic — referenced nowhere.
-- `scripts/run.sh`: the 328-line bash twin of `scripts/run.py`, kept alive
-  next to the Python pipeline that actually runs (DRY violation, guaranteed
-  drift). `scripts/run.sh.txt` (stale 4-step draft) and `scripts/flatten.sh`
-  (already ported to `run.py::flatten()`) went with it.
-- Dead code: unused `import time` / `import urlparse` in `server.py`, unused
-  `ExportError` class in `export_categories.py`, unused `re`/`time` imports in
-  `build_categories.py`, duplicate local `wiki_slug()` in `run.py`, duplicate
-  `title_to_stem()` in `build_categories.py`, duplicate `cat_to_stem()` /
-  `cat_to_filename()` in the exporters.
-- `DELETE /api/jobs/{job_id}` route in `server.py`: never called (the UI and
-  any external caller delete via `POST /api/jobs/bulk_delete`).
+**Plain words:**
+Removed obsolete bash scripts, unreferenced files, and duplicate code.
 
-### Security audit
+**Technical:**
+- Remove root `extract.py`, legacy `scripts/run.sh`, `scripts/run.sh.txt`, and `scripts/flatten.sh`.
+- Remove dead imports, unused `ExportError` class, duplicate local naming helpers, and unused `DELETE /api/jobs/{job_id}` route.
 
-- No `.env` value is referenced or leaked anywhere in code, logs or docs;
-  only variable *names* (`HOST_PROJECT_DIR`, `NOTEBOOKLM_MAX_WORDS`,
-  `MAX_FILES`) appear in `docker-compose.yml` / code. `.env` stays ignored
-  (`.gitignore`) and is not committed.
+### Security
+
+**Plain words:**
+Audited codebase to guarantee that local secret environment configurations are never leaked or referenced in source files.
+
+**Technical:**
+- Verified `.env` variables and secrets remain unreferenced in commits, logs, and docs.

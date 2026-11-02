@@ -393,9 +393,9 @@ class JobManager:
         before = job.disk_usage()["bytes"]
         jd = job.job_dir()
         if scope == "pdf":
-            targets = [jd / "pdf", jd / "flat"]
+            targets = [jd / "pdf"]
         elif scope == "intermediate":
-            targets = [jd / "dump", jd / "html", jd / "pdf", jd / "flat"]
+            targets = [jd / "dump", jd / "html", jd / "pdf"]
         else:
             return {"error": f"Unknown scope: {scope}"}
         for t in targets:
@@ -646,7 +646,7 @@ def _validate_params(params: dict, keys) -> Optional[str]:
                 n = int(float(v))
                 if n != float(v):
                     raise ValueError
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 return f"{key} must be a whole number >= {minimum}."
             if n < minimum:
                 return f"{key} must be a whole number >= {minimum}."
@@ -703,14 +703,21 @@ async def patch_job(job_id: str, req: Request):
     try:
         job  = mgr.get(job_id)
         body = await req.json()
-        if "wiki_url" in body:
-            job.wiki_url = body["wiki_url"].strip()
+        url = body["wiki_url"].strip() if body.get("wiki_url") else job.wiki_url
+        params = job.params
         if "params" in body:
             params = {k: body["params"].get(k, v) for k, v in DEFAULTS.items()}
             problem = _validate_params(params, set(body["params"]) & set(DEFAULTS))
             if problem:
                 return JSONResponse({"error": problem}, status_code=400)
-            job.params = params
+        # The output folder follows the wiki and the "separate folder" choice:
+        # moving it under existing files would orphan them (hidden in the UI, never deleted).
+        new_folder = wiki_names.output_folder(url, job.id, bool(params.get("output_per_job")))
+        if new_folder != job.merged_dir().name and job._has_files(job.merged_dir()):
+            return JSONResponse({"error": "Files were already generated for this job: delete "
+                                 "them (or create a new job) to change the wiki or the output folder."},
+                                status_code=400)
+        job.wiki_url, job.params = url, params
         mgr._save()
         return job.meta()
     except KeyError:
@@ -1475,7 +1482,7 @@ function buildForm(job) {
       <div class="opt-group opt-check">
         <input type="checkbox" id="f-images" ${p.images ? "checked" : ""}/><span>Include images</span></div>
       <div class="opt-group opt-check">
-        <input type="checkbox" id="f-perjob" ${p.output_per_job ? "checked" : ""}/><span>Separate output folder <small style="color:var(--muted)">(this job won't overwrite another one's files)</small></span></div>
+        <input type="checkbox" id="f-perjob" ${p.output_per_job ? "checked" : ""} ${job?.has_output ? "disabled" : ""}/><span>Separate output folder <small style="color:var(--muted)">(this job won't overwrite another one's files)</small></span></div>
       <div class="opt-group opt-check">
         <input type="checkbox" id="f-unique" ${p.unique_names ? "checked" : ""}/><span>Unique file names <small style="color:var(--muted)">(no page lost when two titles look alike; needs a new dump)</small></span></div>
       <div class="opt-group opt-check">
@@ -1519,17 +1526,19 @@ async function ensureJob(existingId) {
   const base = existingId ? allJobs[existingId]?.params : globalSettings;
   const params = collectParams(base);
   if (existingId) {
-    await fetch(`/api/jobs/${existingId}`, {
+    const r = await fetch(`/api/jobs/${existingId}`, {
       method: "PATCH", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ wiki_url: url || undefined, params }),
-    });
+    }).then(r => r.json()).catch(() => ({error: "Network error"}));
+    if (r.error) { showToast(r.error, {type:"err"}); return null; }
     return existingId;
   }
   if (!url) { showToast("Paste the wiki URL first.", {type:"err"}); return null; }
   const job = await fetch("/api/jobs", {
     method: "POST", headers: {"Content-Type":"application/json"},
     body: JSON.stringify({ wiki_url: url, ...params }),
-  }).then(r => r.json());
+  }).then(r => r.json()).catch(() => ({error: "Network error"}));
+  if (job.error) { showToast(job.error, {type:"err"}); return null; }
   allJobs[job.id] = job;
   return job.id;
 }

@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from helpers import pipeline_env
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -95,10 +97,7 @@ def _generate(tmp_path, selection, **over):
     job_id = _make_job(tmp_path / "data")
     sel = tmp_path / "data" / "jobs" / job_id / "selection.json"
     sel.write_text(json.dumps(selection))
-    env = {**os.environ, "WIKI_API": "https://wiki.test/api.php",
-           "JOB_DIR": str(sel.parent), "DATA_DIR": str(tmp_path / "data"),
-           "PHASE": "generate", "EXPORT_FORMATS": "txt", "MAX_FILES": "50",
-           "DEDUP": "true", "PYTHONPATH": str(ROOT / "scripts"), **over}
+    env = pipeline_env(tmp_path, JOB_DIR=sel.parent, MAX_FILES=50, DEDUP="true", **over)
     r = subprocess.run([sys.executable, str(ROOT / "scripts" / "run.py")], env=env,
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -240,4 +239,14 @@ def test_ui_form_exposes_the_new_options(browser_page):
     page.check("#f-perjob")
     params = page.evaluate("collectParams()")
     assert params["output_per_job"] is True and params["unique_names"] is False
+    assert errors == []
+
+
+def test_ui_shows_why_the_server_refused_a_value(browser_page):
+    """A refused value used to leave a dead button: no message, scan not started."""
+    page, errors = browser_page(tree=False)
+    page.fill("#f-maxfiles", "-5")
+    page.evaluate("ensureJob('20261101-000000-test')")
+    page.wait_for_selector("text=max_files")
+    assert page.evaluate("fetch('/api/jobs').then(r => r.json())")[0]["params"].get("max_files") != -5
     assert errors == []

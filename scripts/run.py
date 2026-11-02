@@ -141,7 +141,6 @@ def main() -> int:
     dump_dir = job_dir / "dump"
     html_dir = job_dir / "html"
     pdf_dir = job_dir / "pdf"
-    flat_dir = job_dir / "flat"
 
     out_dir = data_dir / "output" / output_folder(
         wiki_api, job_dir.name, env_bool("OUTPUT_PER_JOB", False))
@@ -168,11 +167,11 @@ def main() -> int:
     if phase != "generate":
         if clean:
             log("⚠ Full cleanup -- removing all previous data")
-            for d in (dump_dir, html_dir, pdf_dir, flat_dir, out_dir):
+            for d in (dump_dir, html_dir, pdf_dir, out_dir):
                 shutil.rmtree(d, ignore_errors=True)
         elif rerender:
             log("♻ Re-rendering -- removing HTML/PDF (dump kept)")
-            for d in (html_dir, pdf_dir, flat_dir, out_dir):
+            for d in (html_dir, pdf_dir, out_dir):
                 shutil.rmtree(d, ignore_errors=True)
 
     # ── 1. dump ──────────────────────────────────────────────────────────────────
@@ -256,12 +255,25 @@ def main() -> int:
 
     html_count = len(list(html_dir.glob("*.html"))) if html_dir.exists() else 0
     extraction_marker = html_dir / EXTRACTION_MARKER
+    unique_names = env_bool("UNIQUE_NAMES", False)
+    extraction_done = None   # (namespaces, unique_names) of the finished extraction, if any
+    if extraction_marker.exists():
+        ns_done, _, uniq_done = extraction_marker.read_text(encoding="utf-8").strip().partition("|")
+        extraction_done = (ns_done, uniq_done == "true")
     if phase == "generate":
         log("↩ Skipped (generate phase)")
-    elif (html_count > 0 and extraction_marker.exists()
-          and extraction_marker.read_text(encoding="utf-8").strip() == namespaces):
+    elif html_count > 0 and extraction_done == (namespaces, unique_names):
         skip_step(f"{html_count} HTML files already present")
+    elif html_count > 0 and extraction_done and extraction_done[1] != unique_names:
+        # File names were built with the other naming rule: mixing both would
+        # count every page with punctuation twice. Only a fresh extraction is clean.
+        log("⚠ FAILURE: 'Unique file names' was changed after the pages were "
+            "extracted -- tick 'New full dump' to apply it")
+        return 1
     else:
+        if html_count > 0 and extraction_done:
+            log("ℹ Namespaces changed: pages of the new namespaces are found only "
+                "if the dump contains them ('New full dump' otherwise)")
         if html_count > 0:
             # An interrupted extraction leaves some pages on disk: skipping the
             # step would silently archive an incomplete wiki. extract.py is
@@ -279,7 +291,7 @@ def main() -> int:
                 log(f"⚠ FAILURE: extraction produced 0 HTML pages from {xml_file} "
                     f"(wrong namespaces? empty dump?) -- aborting, nothing to export")
                 return 1
-            extraction_marker.write_text(namespaces, encoding="utf-8")   # redo if it changes
+            extraction_marker.write_text(f"{namespaces}|{'true' if unique_names else 'false'}", encoding="utf-8")
             log(f"{html_count} HTML files generated")
 
     # ── 3. PDF conversion ────────────────────────────────────────────────────────
@@ -408,7 +420,8 @@ def main() -> int:
     # once the new one is complete (a failed run no longer wipes it).
     print()
     print("━━━ [5/5] PER-CATEGORY FILE PRODUCTION ━━━")
-    stage_dir = out_dir.parent / f"{out_dir.name}.partial"
+    # Named after the job: two jobs of the same wiki must not share (and wipe) one staging folder.
+    stage_dir = out_dir.parent / f"{out_dir.name}.{job_dir.name}.partial"
     shutil.rmtree(stage_dir, ignore_errors=True)
     stage_dir.mkdir(parents=True)
     produced_ok = False
@@ -460,11 +473,20 @@ def main() -> int:
         return 1
 
     log(f"Replacing previous output: {out_dir}")
-    shutil.rmtree(out_dir, ignore_errors=True)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for f in sorted(stage_dir.glob("*")):
-        shutil.move(str(f), str(out_dir / f.name))
-    shutil.rmtree(stage_dir, ignore_errors=True)
+    old_dir = out_dir.parent / f"{out_dir.name}.{job_dir.name}.old"
+    shutil.rmtree(old_dir, ignore_errors=True)
+    if out_dir.exists():
+        try:
+            out_dir.rename(old_dir)          # the old output stays whole until the swap
+        except OSError:                       # e.g. folder open in Windows Explorer
+            shutil.rmtree(out_dir, ignore_errors=True)
+    if out_dir.exists():                      # still locked: refill it in place
+        for f in sorted(stage_dir.glob("*")):
+            shutil.move(str(f), str(out_dir / f.name))
+        shutil.rmtree(stage_dir, ignore_errors=True)
+    else:
+        stage_dir.rename(out_dir)
+    shutil.rmtree(old_dir, ignore_errors=True)
 
     produced = [f for f in sorted(out_dir.glob("*")) if f.is_file()]
     print()

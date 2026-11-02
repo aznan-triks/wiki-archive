@@ -56,6 +56,13 @@ regression test in `tests/test_audit_fixes.py`.
 - Settings are validated like jobs; a delay of `0` can be set; the default format
   list can no longer be saved empty.
 
+- Review follow-up: the staging folder is per job (two jobs of one wiki no longer wipe
+  each other's); the old output is renamed aside before the swap; a refused value now
+  shows its message instead of a dead button; the extraction marker also records
+  "Unique file names" (changing it after extraction is refused until a new dump);
+  once a job has output, its output folder cannot move (files would be orphaned);
+  huge numbers give a 400 instead of a 500; dead `flat/` code removed.
+
 ### Security
 
 - Cross-site writes are refused (`Origin` must match `Host`): a web page could

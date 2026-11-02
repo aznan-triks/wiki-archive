@@ -12,43 +12,10 @@ from pathlib import Path
 
 import pytest
 
+from helpers import dump_xml, page_html, pipeline_env, run_pipeline
+
 ROOT = Path(__file__).resolve().parents[1]
-RUN = ROOT / "scripts" / "run.py"
 EXTRACT = ROOT / "scripts" / "extract.py"
-
-
-def _env(tmp_path: Path, **over) -> dict:
-    env = {
-        **os.environ,
-        "WIKI_API": "https://wiki.test/api.php",
-        "JOB_DIR": str(tmp_path / "job"),
-        "DATA_DIR": str(tmp_path / "data"),
-        "EXPORT_FORMATS": "txt",
-        "PHASE": "generate",
-        "MAX_FILES": "0",
-        "DEDUP": "false",
-        "PYTHONPATH": str(ROOT / "scripts"),
-    }
-    env.pop("MISC_CATEGORY", None)
-    env.update({k: str(v) for k, v in over.items()})
-    return env
-
-
-def _run(tmp_path, **over):
-    return subprocess.run([sys.executable, str(RUN)], env=_env(tmp_path, **over),
-                          capture_output=True, text=True)
-
-
-def _page(title: str) -> str:
-    return f"<html><body><h1>{title}</h1><p>Body of {title}.</p></body></html>"
-
-
-def _xml(*titles: str) -> str:
-    pages = "".join(
-        f"<page><title>{t}</title><ns>0</ns><revision><text>Text of {t}</text></revision></page>"
-        for t in titles)
-    return ('<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/">'
-            f"{pages}</mediawiki>")
 
 
 # ── PDF generation (PLAN-UX-01 / PLAN-UX-02) ──────────────────────────────────
@@ -66,7 +33,7 @@ def test_pdf_titles_with_spaces_and_accents_stay_in_their_category(tmp_path):
         pdf.save(job / "pdf" / f"{stem}.pdf")
     (job / "category_groups.json").write_text(json.dumps({"Weapons": stems}), encoding="utf-8")
 
-    r = _run(tmp_path, EXPORT_FORMATS="pdf")
+    r = run_pipeline(tmp_path, EXPORT_FORMATS="pdf")
     assert r.returncode == 0, r.stdout + r.stderr
     out = tmp_path / "data" / "output" / "wiki.test"
     assert not (out / "Misc.pdf").exists(), "categorized pages leaked into Misc"
@@ -83,10 +50,10 @@ def test_generate_phase_converts_html_to_pdf(tmp_path):
         pytest.skip("WeasyPrint/pango unavailable")
     job = tmp_path / "job"
     (job / "html").mkdir(parents=True)
-    (job / "html" / "Pistol.html").write_text(_page("Pistol"), encoding="utf-8")
+    (job / "html" / "Pistol.html").write_text(page_html("Pistol"), encoding="utf-8")
     (job / "category_groups.json").write_text(json.dumps({"Weapons": ["Pistol"]}), encoding="utf-8")
 
-    r = _run(tmp_path, EXPORT_FORMATS="pdf")
+    r = run_pipeline(tmp_path, EXPORT_FORMATS="pdf")
     assert r.returncode == 0, r.stdout + r.stderr
     assert (tmp_path / "data" / "output" / "wiki.test" / "Weapons.pdf").exists()
 
@@ -99,16 +66,16 @@ def test_no_api_mode_writes_one_file_per_category(tmp_path):
     pytest.importorskip("markdownify")
     job = tmp_path / "job"
     (job / "dump").mkdir(parents=True)
-    (job / "dump" / "wiki.xml").write_text(_xml("Pistol"), encoding="utf-8")
+    (job / "dump" / "wiki.xml").write_text(dump_xml("Pistol"), encoding="utf-8")
     (job / "dump" / "config.json").write_text("{}", encoding="utf-8")   # no API
     (job / "html").mkdir()
     for t in ("Pistol", "Rifle", "Lore"):
-        (job / "html" / f"{t}.html").write_text(_page(t), encoding="utf-8")
+        (job / "html" / f"{t}.html").write_text(page_html(t), encoding="utf-8")
     (job / "html" / ".extraction_complete").write_text("0", encoding="utf-8")
     (job / "categories.json").write_text(
         json.dumps({"Pistol": ["Weapons"], "Rifle": ["Weapons"], "Lore": []}), encoding="utf-8")
 
-    r = _run(tmp_path, PHASE="all", EXPORT_FORMATS="md")
+    r = run_pipeline(tmp_path, PHASE="all", EXPORT_FORMATS="md")
     assert r.returncode == 0, r.stdout + r.stderr
     out = tmp_path / "data" / "output" / "wiki.test"
     assert sorted(p.name for p in out.glob("*.md")) == ["Misc.md", "Weapons.md"]
@@ -127,7 +94,7 @@ def test_invalid_format_fails_fast_and_keeps_previous_output(tmp_path, formats):
     out = _seed_previous_output(tmp_path)
     job = tmp_path / "job"
     (job / "html").mkdir(parents=True)
-    r = _run(tmp_path, EXPORT_FORMATS=formats)
+    r = run_pipeline(tmp_path, EXPORT_FORMATS=formats)
     assert r.returncode != 0
     assert "invalid export format" in r.stdout
     assert (out / "Old.txt").read_text(encoding="utf-8") == "keep me"
@@ -137,13 +104,13 @@ def test_failed_generation_keeps_previous_output(tmp_path):
     out = _seed_previous_output(tmp_path)
     job = tmp_path / "job"
     (job / "html").mkdir(parents=True)
-    (job / "html" / "Empty.html").write_text(_page("Empty"), encoding="utf-8")
+    (job / "html" / "Empty.html").write_text(page_html("Empty"), encoding="utf-8")
     (job / "category_groups.json").write_text("{}", encoding="utf-8")
     (job / "selection.json").write_text(json.dumps(["NoSuchCategory"]), encoding="utf-8")
-    r = _run(tmp_path)
+    r = run_pipeline(tmp_path)
     assert r.returncode != 0
     assert (out / "Old.txt").read_text(encoding="utf-8") == "keep me"
-    assert not (out.parent / "wiki.test.partial").exists(), "staging folder leaked"
+    assert sorted(x.name for x in out.parent.iterdir()) == ["wiki.test"], "staging folder leaked"
 
 
 def test_successful_generation_replaces_previous_output(tmp_path):
@@ -152,22 +119,22 @@ def test_successful_generation_replaces_previous_output(tmp_path):
     out = _seed_previous_output(tmp_path)
     job = tmp_path / "job"
     (job / "html").mkdir(parents=True)
-    (job / "html" / "Pistol.html").write_text(_page("Pistol"), encoding="utf-8")
+    (job / "html" / "Pistol.html").write_text(page_html("Pistol"), encoding="utf-8")
     (job / "category_groups.json").write_text(json.dumps({"Weapons": ["Pistol"]}), encoding="utf-8")
-    r = _run(tmp_path)
+    r = run_pipeline(tmp_path)
     assert r.returncode == 0, r.stdout + r.stderr
     assert sorted(p.name for p in out.iterdir()) == ["Weapons.txt"]
-    assert not (out.parent / "wiki.test.partial").exists()
+    assert sorted(x.name for x in out.parent.iterdir()) == ["wiki.test"], "staging/old folder leaked"
 
 
 # ── extraction resume (PLAN-UX-06 / D44) ──────────────────────────────────────
 def _extraction_job(tmp_path, marker: bool):
     job = tmp_path / "job"
     (job / "dump").mkdir(parents=True)
-    (job / "dump" / "wiki.xml").write_text(_xml("Alpha", "Beta"), encoding="utf-8")
+    (job / "dump" / "wiki.xml").write_text(dump_xml("Alpha", "Beta"), encoding="utf-8")
     (job / "dump" / "config.json").write_text("{}", encoding="utf-8")
     (job / "html").mkdir()
-    (job / "html" / "Alpha.html").write_text(_page("Alpha"), encoding="utf-8")   # interrupted run
+    (job / "html" / "Alpha.html").write_text(page_html("Alpha"), encoding="utf-8")   # interrupted run
     if marker:
         (job / "html" / ".extraction_complete").write_text("0", encoding="utf-8")
     return job
@@ -178,7 +145,7 @@ def test_interrupted_extraction_is_resumed_not_skipped(tmp_path):
     pytest.importorskip("bs4")
     pytest.importorskip("markdownify")
     job = _extraction_job(tmp_path, marker=False)
-    r = _run(tmp_path, PHASE="scan", EXPORT_FORMATS="md")
+    r = run_pipeline(tmp_path, PHASE="scan", EXPORT_FORMATS="md")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "resuming" in r.stdout
     assert (job / "html" / "Beta.html").exists(), "the missing page was never extracted"
@@ -187,7 +154,7 @@ def test_interrupted_extraction_is_resumed_not_skipped(tmp_path):
 
 def test_complete_extraction_is_still_skipped(tmp_path):
     job = _extraction_job(tmp_path, marker=True)
-    r = _run(tmp_path, PHASE="scan", EXPORT_FORMATS="md")
+    r = run_pipeline(tmp_path, PHASE="scan", EXPORT_FORMATS="md")
     assert "1 HTML files already present" in r.stdout, r.stdout + r.stderr
     assert not (job / "html" / "Beta.html").exists()
 
@@ -195,7 +162,7 @@ def test_complete_extraction_is_still_skipped(tmp_path):
 def test_title_collision_is_reported_not_silent(tmp_path):
     pytest.importorskip("mwparserfromhell")
     xml = tmp_path / "wiki.xml"
-    xml.write_text(_xml("A/B", "A:B"), encoding="utf-8")
+    xml.write_text(dump_xml("A/B", "A:B"), encoding="utf-8")
     dest = tmp_path / "html"
     r = subprocess.run([sys.executable, str(EXTRACT), str(xml), str(dest), "", "0",
                         str(tmp_path / "categories.json")],
@@ -214,7 +181,8 @@ def _server_snippet(tmp_path: Path, body: str, **env_over) -> dict:
     env = {**os.environ, "DATA_DIR": str(tmp_path / "data"),
            "SCRIPTS_DIR": str(ROOT / "scripts"),
            **{k: str(v) for k, v in env_over.items()}}
-    env.pop("BIND_HOST", None) if "BIND_HOST" not in env_over else None
+    if "BIND_HOST" not in env_over:
+        env.pop("BIND_HOST", None)
     code = ("import json, sys; sys.path.insert(0, %r)\nimport server\n" % str(ROOT)
             + textwrap.dedent(body) + "\nprint('RESULT:' + json.dumps(result))")
     r = subprocess.run([sys.executable, "-c", code], env=env, cwd=str(ROOT),
@@ -306,7 +274,7 @@ def test_invalid_job_parameters_are_refused_not_persisted(tmp_path):
 def _extract(tmp_path, titles, **env):
     pytest.importorskip("mwparserfromhell")
     xml = tmp_path / "wiki.xml"
-    xml.write_text(_xml(*titles), encoding="utf-8")
+    xml.write_text(dump_xml(*titles), encoding="utf-8")
     dest = tmp_path / "html"
     r = subprocess.run([sys.executable, str(EXTRACT), str(xml), str(dest), "", "0",
                         str(tmp_path / "categories.json")],
@@ -347,10 +315,10 @@ def test_output_per_job_option_gives_each_job_its_own_folder(tmp_path):
     pytest.importorskip("bs4"); pytest.importorskip("markdownify")
     job = tmp_path / "job"
     (job / "html").mkdir(parents=True)
-    (job / "html" / "P.html").write_text(_page("P"), encoding="utf-8")
+    (job / "html" / "P.html").write_text(page_html("P"), encoding="utf-8")
     (job / "category_groups.json").write_text(json.dumps({"C": ["P"]}), encoding="utf-8")
-    shared = _run(tmp_path)
-    own = _run(tmp_path, OUTPUT_PER_JOB="true")
+    shared = run_pipeline(tmp_path)
+    own = run_pipeline(tmp_path, OUTPUT_PER_JOB="true")
     assert shared.returncode == own.returncode == 0
     out = tmp_path / "data" / "output"
     assert sorted(p.name for p in out.iterdir()) == ["wiki.test", "wiki.test--job"]
@@ -358,7 +326,7 @@ def test_output_per_job_option_gives_each_job_its_own_folder(tmp_path):
 
 def test_changing_namespaces_redoes_a_finished_extraction(tmp_path):
     job = _extraction_job(tmp_path, marker=True)       # marker says namespaces "0"
-    r = _run(tmp_path, PHASE="scan", EXPORT_FORMATS="md", NAMESPACES="0,14")
+    r = run_pipeline(tmp_path, PHASE="scan", EXPORT_FORMATS="md", NAMESPACES="0,14")
     assert "already present" not in r.stdout
 
 
@@ -371,11 +339,11 @@ def test_generation_converts_only_the_selected_pages_to_pdf(tmp_path):
     job = tmp_path / "job"
     (job / "html").mkdir(parents=True)
     for t in ("Pistol", "Rifle", "Lore"):
-        (job / "html" / f"{t}.html").write_text(_page(t), encoding="utf-8")
+        (job / "html" / f"{t}.html").write_text(page_html(t), encoding="utf-8")
     (job / "category_groups.json").write_text(
         json.dumps({"Weapons": ["Pistol"], "Other": ["Rifle"]}), encoding="utf-8")
     (job / "selection.json").write_text(json.dumps(["Weapons"]), encoding="utf-8")
-    r = _run(tmp_path, EXPORT_FORMATS="pdf")
+    r = run_pipeline(tmp_path, EXPORT_FORMATS="pdf")
     assert r.returncode == 0, r.stdout + r.stderr
     assert sorted(p.name for p in (job / "pdf").glob("*.pdf")) == ["Pistol.pdf"]
 
@@ -383,7 +351,7 @@ def test_generation_converts_only_the_selected_pages_to_pdf(tmp_path):
 def test_extraction_accepts_other_export_schema_versions(tmp_path):
     pytest.importorskip("mwparserfromhell")
     xml = tmp_path / "w.xml"
-    xml.write_text(_xml("Alpha").replace("export-0.11", "export-0.10"), encoding="utf-8")
+    xml.write_text(dump_xml("Alpha").replace("export-0.11", "export-0.10"), encoding="utf-8")
     r = subprocess.run([sys.executable, str(EXTRACT), str(xml), str(tmp_path / "html"), "", "0",
                         str(tmp_path / "c.json")],
                        env={**os.environ, "PYTHONPATH": str(ROOT / "scripts")},
@@ -402,3 +370,90 @@ def test_invalid_settings_are_refused(tmp_path):
                   "delay": good.json()["settings"]["delay"]}
     """)
     assert res == {"bad": 400, "good": 200, "delay": 0.0}
+
+
+# ── review follow-up ──────────────────────────────────────────────────────────
+def test_another_jobs_staging_folder_is_left_alone(tmp_path):
+    """Two jobs of one wiki used the same '<wiki>.partial': the second wiped the first."""
+    pytest.importorskip("bs4"); pytest.importorskip("markdownify")
+    other = tmp_path / "data" / "output" / "wiki.test.other-job.partial"
+    other.mkdir(parents=True)
+    (other / "half.txt").write_text("being written by another job", encoding="utf-8")
+    job = tmp_path / "job"
+    (job / "html").mkdir(parents=True)
+    (job / "html" / "P.html").write_text(page_html("P"), encoding="utf-8")
+    (job / "category_groups.json").write_text(json.dumps({"C": ["P"]}), encoding="utf-8")
+    r = run_pipeline(tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (other / "half.txt").exists()
+    leftovers = sorted(p.name for p in (tmp_path / "data" / "output").iterdir())
+    assert leftovers == ["wiki.test", "wiki.test.other-job.partial"], leftovers
+
+
+def test_changing_unique_names_after_extraction_is_refused(tmp_path):
+    job = _extraction_job(tmp_path, marker=True)
+    (job / "html" / ".extraction_complete").write_text("0|false", encoding="utf-8")
+    r = run_pipeline(tmp_path, PHASE="scan", EXPORT_FORMATS="md", UNIQUE_NAMES="true")
+    assert r.returncode != 0 and "New full dump" in r.stdout
+    assert not (job / "html" / "Beta.html").exists(), "must not mix both naming rules"
+
+
+def test_legacy_marker_without_flag_still_counts_as_finished(tmp_path):
+    _extraction_job(tmp_path, marker=True)               # writes the old "0" format
+    r = run_pipeline(tmp_path, PHASE="scan", EXPORT_FORMATS="md")
+    assert "already present" in r.stdout
+
+
+def test_output_folder_cannot_move_under_existing_files(tmp_path):
+    res = _server_snippet(tmp_path, """
+        from fastapi.testclient import TestClient
+        c = TestClient(server.app)
+        job = server.mgr.create("https://same.test/api.php", dict(server.DEFAULTS))
+        before = c.patch(f"/api/jobs/{job.id}", json={"params": {**server.DEFAULTS, "output_per_job": True}})
+        server.mgr.get(job.id).params = dict(server.DEFAULTS)
+        out = job.merged_dir(); out.mkdir(parents=True); (out / "Final.pdf").write_text("x")
+        locked = c.patch(f"/api/jobs/{job.id}", json={"params": {**server.DEFAULTS, "output_per_job": True}})
+        url = c.patch(f"/api/jobs/{job.id}", json={"wiki_url": "https://other.test/api.php"})
+        same = c.patch(f"/api/jobs/{job.id}", json={"params": {**server.DEFAULTS, "max_files": 7}})
+        result = {"before": before.status_code, "locked": locked.status_code, "url": url.status_code,
+                  "same": same.status_code, "url_kept": job.wiki_url}
+    """)
+    assert res == {"before": 200, "locked": 400, "url": 400, "same": 200,
+                   "url_kept": "https://same.test/api.php"}
+
+
+def test_a_refused_patch_changes_nothing(tmp_path):
+    res = _server_snippet(tmp_path, """
+        from fastapi.testclient import TestClient
+        c = TestClient(server.app)
+        job = server.mgr.create("https://a.test/api.php", dict(server.DEFAULTS))
+        r = c.patch(f"/api/jobs/{job.id}", json={"wiki_url": "https://b.test/api.php",
+                                                  "params": {**server.DEFAULTS, "max_files": -1}})
+        result = {"status": r.status_code, "url": job.wiki_url}
+    """)
+    assert res == {"status": 400, "url": "https://a.test/api.php"}
+
+
+def test_huge_numbers_are_refused_not_a_server_error(tmp_path):
+    res = _server_snippet(tmp_path, """
+        from fastapi.testclient import TestClient
+        c = TestClient(server.app, raise_server_exceptions=False)
+        result = [c.post("/api/jobs", json={"wiki_url": "https://x.test/api.php", "max_files": v}).status_code
+                  for v in ("1e999", 10 ** 400, "nan")]
+    """)
+    assert res == [400, 400, 400]
+
+
+def test_output_is_still_replaced_when_the_old_folder_cannot_be_moved_aside(tmp_path):
+    """Windows: the old output may be locked (open in Explorer). A file squatting on the
+    '.old' name forces the same fallback path on Linux: the run must still deliver."""
+    pytest.importorskip("bs4"); pytest.importorskip("markdownify")
+    out = _seed_previous_output(tmp_path)
+    (out.parent / "wiki.test.job.old").write_text("squatter", encoding="utf-8")
+    job = tmp_path / "job"
+    (job / "html").mkdir(parents=True)
+    (job / "html" / "P.html").write_text(page_html("P"), encoding="utf-8")
+    (job / "category_groups.json").write_text(json.dumps({"C": ["P"]}), encoding="utf-8")
+    r = run_pipeline(tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert sorted(x.name for x in out.iterdir()) == ["C.txt"]

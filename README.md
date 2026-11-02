@@ -105,6 +105,8 @@ Go to **http://localhost:8080** after `docker compose up -d`.
 The interface has no password, so the port is published on this machine only
 (`127.0.0.1`). To open it to other devices on your network, put
 `PUBLISH_HOST=0.0.0.0` in `.env` -- only on a network you trust.
+When running `python server.py` yourself, the server listens on `127.0.0.1`
+only; set `BIND_HOST=0.0.0.0` (and `PORT`) in the environment to change that.
 
 ### Create a job
 1. Click **"+ New"**

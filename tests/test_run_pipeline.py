@@ -12,27 +12,14 @@ from pathlib import Path
 
 import pytest
 
+from helpers import pipeline_env
+
 ROOT = Path(__file__).resolve().parents[1]
 RUN  = ROOT / "scripts" / "run.py"
 
 
 def _env(tmp_path: Path, **over) -> dict:
-    env = {
-        **os.environ,
-        "WIKI_API": "https://wiki.test/wiki/Main_Page",
-        "JOB_DIR":  str(tmp_path / "job"),
-        "DATA_DIR": str(tmp_path / "data"),
-        "EXPORT_FORMATS": over.get("formats", "txt"),
-        "PHASE": "generate",          # steps 1-4 are skipped (no network)
-        "MAX_FILES": "0",
-        "DEDUP": "false",
-        "PYTHONPATH": str(ROOT / "scripts"),
-    }
-    env.pop("MISC_CATEGORY", None)
-    for k, v in over.items():
-        if k != "formats":
-            env[k] = str(v)
-    return env
+    return pipeline_env(tmp_path, EXPORT_FORMATS=over.pop("formats", "txt"), **over)
 
 
 def test_export_failure_fails_the_pipeline(tmp_path):

@@ -8,7 +8,7 @@ A page in multiple categories appears in each of the corresponding PDFs.
 Categories larger than <max_pages_per_pdf> pages are split into
 "<Category>_part1.pdf", "<Category>_part2.pdf", ...
 
-Usage: merge_pdf.py <flat_dir> <out_dir> [max_pages_per_pdf] [category_groups.json]
+Usage: merge_pdf.py <pdf_dir> <out_dir> [max_pages_per_pdf] [category_groups.json]
 """
 import json
 import os
@@ -25,7 +25,7 @@ from wiki_names import MISC_CATEGORY, cat_stem  # same dir, on sys.path
 # category are added (disabled when a selection is active).
 ADD_DIVERS = os.getenv("ADD_DIVERS", "true").lower() != "false"
 
-src_dir    = Path(sys.argv[1])   # /data/jobs/.../flat
+src_dir    = Path(sys.argv[1])   # /data/jobs/.../pdf
 out_dir    = Path(sys.argv[2])   # /data/output/wiki.hostname
 max_pages  = int(sys.argv[3]) if len(sys.argv) > 3 else 500
 groups_file = Path(sys.argv[4]) if len(sys.argv) > 4 else Path(sys.argv[1]).parent / "category_groups.json"

@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-11-02
+
+### Changed
+
+**Plain words:**
+Grouping categories into a limited number of files is much faster on large wikis, and so is the live file-count preview in the interface. The files produced are exactly the same.
+
+**Technical:**
+- `pack_files.pack()`: step 3 (greedy merge of the smallest groups) now caches each group's word count in a dictionary updated on each merge iteration instead of re-summing word counts repeatedly. Output is identical; about 8x faster on large wikis.
+
 ## [1.1.0] - 2026-11-02
 
 ### Added

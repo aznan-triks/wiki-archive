@@ -166,8 +166,9 @@ def pack(groups: dict[str, list[str]],
                 break
 
     # 3. Greedy merging of the smallest ones
+    size = {n: _words_of(s, page_words) or len(s) for n, s in packed.items()}
     while len(packed) > max_files:
-        by_size = sorted(packed.items(), key=lambda x: _words_of(x[1], page_words) or len(x[1]))
+        by_size = sorted(packed.items(), key=lambda x: size[x[0]])
         n1, p1 = by_size[0]
         n2, p2 = by_size[1]
         merged = sorted(set(p1) | set(p2))
@@ -177,6 +178,8 @@ def pack(groups: dict[str, list[str]],
             break
         del packed[n1]
         del packed[n2]
+        del size[n1]
+        del size[n2]
         merged_name = n1
         for cat, node in nodes.items():
             kids = node.get("children", [])
@@ -186,6 +189,7 @@ def pack(groups: dict[str, list[str]],
         if merged_name == n1:
             merged_name = f"{n1}+{n2}"
         packed[merged_name] = merged
+        size[merged_name] = _words_of(merged, page_words) or len(merged)
         log(f"  <- {n1!r} + {n2!r} -> {merged_name!r} ({len(merged)} pages)")
 
     return packed

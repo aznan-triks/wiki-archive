@@ -34,3 +34,12 @@ _backup_*/
 Thumbs.db
 .vscode/
 .idea/
+
+# Agent rule files (private, never published)
+AGENTS.md
+GEMINI.md
+CONTEXT.md
+CONTEXT_reference.md
+NEXT_SESSION.md
+DECISIONS.md
+.claude-archives/

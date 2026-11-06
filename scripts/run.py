@@ -23,6 +23,7 @@ from wiki_names import MISC_CATEGORY, output_folder  # same dir, on sys.path
 
 PY = sys.executable
 KNOWN_FORMATS = {"pdf", "md", "txt"}
+KNOWN_SOURCES = {"auto", "mediawiki", "site"}
 EXTRACTION_MARKER = ".extraction_complete"   # lives in html/, wiped with it
 SCRIPTS_DIR = Path(__file__).resolve().parent
 
@@ -96,6 +97,20 @@ def api_url_from_config(config_json: Path) -> str:
     return api
 
 
+def detect_mediawiki(wiki_url: str) -> tuple[str, str] | None:
+    """(wikiteam3 flag, url) when the address is a MediaWiki wiki, else None."""
+    detect = subprocess.run(
+        [PY, str(SCRIPTS_DIR / "detect_wiki.py"), wiki_url],
+        capture_output=True, text=True,
+    )
+    for line in detect.stderr.splitlines():
+        log(line)
+    if detect.returncode != 0 or not detect.stdout.strip():
+        return None
+    flag, url = detect.stdout.strip().split(maxsplit=1)
+    return flag, url
+
+
 def main() -> int:
     wiki_api = env("WIKI_API")
     job_dir_s = env("JOB_DIR")
@@ -122,6 +137,11 @@ def main() -> int:
     cat_workers = env("CAT_WORKERS", "8")
     selection_file = Path(env("SELECTION_FILE", str(job_dir / "selection.json")))
     data_dir = Path(env("DATA_DIR", "/data"))
+
+    source = env("SOURCE", "auto")      # auto | mediawiki | site (documentation website)
+    if source not in KNOWN_SOURCES:
+        log(f"⚠ FAILURE: invalid source {source!r} -- choose among: {', '.join(sorted(KNOWN_SOURCES))}")
+        return 1
 
     export_formats = env("EXPORT_FORMATS", "pdf")
     if export_formats == "all":
@@ -174,14 +194,35 @@ def main() -> int:
             for d in (html_dir, pdf_dir, out_dir):
                 shutil.rmtree(d, ignore_errors=True)
 
+    # ── which kind of source? ────────────────────────────────────────────────────
+    detected = None                      # (flag, url) when MediaWiki detection already ran
+    if source == "auto" and phase != "generate":
+        if (dump_dir / "site.json").exists():
+            source = "site"
+        elif dump_dir.exists() and any(dump_dir.glob("*.xml")):
+            source = "mediawiki"
+        else:
+            log("Detecting the kind of site...")
+            detected = detect_mediawiki(wiki_api)
+            source = "mediawiki" if detected else "site"
+            if not detected:
+                log("ℹ Not a MediaWiki wiki -- reading it as a documentation website")
+    if source == "auto":                 # generate phase: nothing to download
+        source = "mediawiki"
+    log(f"Source      : {source}")
+
     # ── 1. dump ──────────────────────────────────────────────────────────────────
     print()
-    print("━━━ [1/5] WIKI DUMP ━━━")
+    print("━━━ [1/5] " + ("SITE DOWNLOAD" if source == "site" else "WIKI DUMP") + " ━━━")
 
     xml_file = None
     config_json = dump_dir / "config.json"
+    hierarchy_file = job_dir / "site_hierarchy.json"
     if phase == "generate":
         log("↩ Skipped (generate phase)")
+    elif source == "site":
+        with Step():
+            run([PY, str(SCRIPTS_DIR / "site_fetch.py"), wiki_api, str(dump_dir)])
     else:
         existing_xml = sorted(p for p in dump_dir.glob("*.xml") if not p.name.endswith(".7z")) if dump_dir.exists() else []
         if existing_xml and config_json.exists():
@@ -190,17 +231,12 @@ def main() -> int:
         else:
             with Step():
                 log("Detecting MediaWiki access type...")
-                detect = subprocess.run(
-                    [PY, str(SCRIPTS_DIR / "detect_wiki.py"), wiki_api],
-                    capture_output=True, text=True,
-                )
-                if detect.stderr:
-                    for line in detect.stderr.splitlines():
-                        log(line)
-                if detect.returncode != 0 or not detect.stdout.strip():
-                    log("⚠ Wiki detection failed")
+                found = detected or detect_mediawiki(wiki_api)
+                if not found:
+                    log("⚠ Wiki detection failed -- if this is a documentation website "
+                        "rather than a MediaWiki wiki, set 'Source' to 'Website'")
                     return 1
-                access_flag, wiki_url = detect.stdout.strip().split(maxsplit=1)
+                access_flag, wiki_url = found
                 log(f"Access detected: {access_flag} {wiki_url}")
 
                 if not shutil.which("wikiteam3dumpgenerator"):
@@ -248,7 +284,7 @@ def main() -> int:
 
     # ── 2. HTML extraction ──────────────────────────────────────────────────────
     print()
-    print("━━━ [2/5] HTML EXTRACTION ━━━")
+    print("━━━ [2/5] " + ("ARTICLE EXTRACTION" if source == "site" else "HTML EXTRACTION") + " ━━━")
 
     api_url = api_url_from_config(config_json) if config_json.exists() else ""
     categories_file = job_dir / "categories.json"
@@ -262,6 +298,13 @@ def main() -> int:
         extraction_done = (ns_done, uniq_done == "true")
     if phase == "generate":
         log("↩ Skipped (generate phase)")
+    elif source == "site":
+        # Offline and incremental: unchanged pages keep their PDF, changed ones lose it.
+        with Step():
+            run([PY, str(SCRIPTS_DIR / "site_extract.py"), str(dump_dir), str(html_dir),
+                 str(categories_file), str(hierarchy_file), str(pdf_dir)])
+            html_count = len(list(html_dir.glob("*.html")))
+            log(f"{html_count} articles ready")
     elif html_count > 0 and extraction_done == (namespaces, unique_names):
         skip_step(f"{html_count} HTML files already present")
     elif html_count > 0 and extraction_done and extraction_done[1] != unique_names:
@@ -356,7 +399,11 @@ def main() -> int:
                         "grouping limits cannot be honored, aborting")
                     return 1
 
-            if api_url and categories_file.exists():
+            if source == "site":
+                log("Building the hierarchy from the site's own navigation...")
+                run([PY, str(SCRIPTS_DIR / "build_site_categories.py"),
+                     str(categories_file), str(hierarchy_file), str(cat_groups)])
+            elif api_url and categories_file.exists():
                 log(f"Building hierarchy via API ({cat_workers} in parallel)...")
                 os.environ["CAT_WORKERS"] = cat_workers
                 run([PY, str(SCRIPTS_DIR / "build_categories.py"), api_url, str(categories_file), str(cat_groups)])

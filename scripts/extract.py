@@ -19,7 +19,8 @@ import xml.etree.ElementTree as ET
 import mwparserfromhell
 import requests
 
-from wiki_names import page_stem  # scripts/ dir is on sys.path (run as a script)
+from page_style import CSS            # scripts/ dir is on sys.path (run as a script)
+from wiki_names import page_stem
 
 # ── args ──────────────────────────────────────────────────────────────────────
 XML_FILE    = sys.argv[1]
@@ -56,25 +57,6 @@ if CATS_FILE.exists():
 
 def save_categories() -> None:
     CATS_FILE.write_text(json.dumps(categories, ensure_ascii=False, indent=2), encoding="utf-8")
-
-# ── embedded CSS ─────────────────────────────────────────────────────────────
-CSS = """
-body { font-family: Arial, sans-serif; max-width: 960px; margin: 2rem auto;
-       padding: 0 1.2rem; color: #222; line-height: 1.6; }
-h1   { font-size: 1.8rem; border-bottom: 2px solid #ccc; padding-bottom: .4rem; }
-h2   { font-size: 1.35rem; border-bottom: 1px solid #ddd; margin-top: 1.6rem; }
-h3   { font-size: 1.1rem; margin-top: 1.2rem; }
-table { border-collapse: collapse; width: 100%; margin: .8rem 0; font-size: .92rem; }
-th, td { border: 1px solid #bbb; padding: .35rem .6rem; text-align: left; vertical-align: top; }
-th { background: #f0f2f4; font-weight: 600; }
-tr:nth-child(even) td { background: #fafafa; }
-ul, ol { padding-left: 1.6rem; }
-li { margin: .2rem 0; }
-pre { background: #f6f8fa; padding: .8rem; border-radius: 4px;
-      white-space: pre-wrap; word-break: break-word; font-size: .85rem; }
-img { max-width: 100%; height: auto; }
-.navbox, .mw-editsection, .noprint, .toc, #toc { display: none !important; }
-"""
 
 # ── rendering via API ──────────────────────────────────────────────────────────
 _api_failures = 0

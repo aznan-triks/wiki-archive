@@ -77,3 +77,12 @@ def test_unknown_format_rejected(tmp_path):
     r = _run([str(html), str(groups), str(tmp_path / "out"), "docx"])
     assert r.returncode == 1
     assert "docx" in r.stderr
+
+
+def test_markdown_code_fence_keeps_its_language_and_title_is_not_doubled():
+    import export_categories as ec
+    import clean_html as ch
+    soup = ch.clean('<html><body><h1>T</h1><pre data-lang="bash"><code>ls -l</code></pre></body></html>')
+    soup.find("h1").decompose()
+    md = ec._render_md("T", ch.body_html(soup))
+    assert md.startswith("# T\n\n") and md.count("# T") == 1 and "```bash\nls -l\n```" in md

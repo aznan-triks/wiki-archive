@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wiki Archive</title>
+<link rel="stylesheet" href="/ui/styles.css?v={{v}}">
+<script>
+  // Theme is applied before the first paint so the page never flashes the wrong one.
+  try { const t = localStorage.getItem("wa-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="rail" id="rail" aria-label="Jobs">
+    <div class="rail-head">
+      <div class="brand">
+        <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="4" width="4" height="16" rx="1" fill="currentColor" opacity=".9"/>
+          <rect x="9" y="6" width="4" height="14" rx="1" fill="currentColor" opacity=".6"/>
+          <rect x="15" y="3" width="4" height="17" rx="1" fill="currentColor" opacity=".35" transform="rotate(8 17 12)"/>
+        </svg>
+        <h1>Wiki Archive</h1>
+      </div>
+      <div class="rail-tools">
+        <button class="btn btn-quiet btn-icon" id="theme-btn" data-act="theme" title="Switch theme" aria-label="Switch theme"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg></button>
+        <button class="btn btn-quiet btn-icon" id="settings-btn" data-act="settings" title="Default settings" aria-label="Default settings">⚙</button>
+      </div>
+    </div>
+    <div class="rail-actions">
+      <button class="btn btn-primary" id="new-btn" data-act="new">New job</button>
+      <button class="btn btn-quiet" id="manage-btn" data-act="manage" aria-pressed="false" title="Select several jobs">Manage</button>
+    </div>
+    <div id="job-list" class="job-list"></div>
+    <div id="bulk-bar"></div>
+  </aside>
+
+  <div class="main-col">
+    <header class="topbar">
+      <button class="btn btn-quiet btn-icon" data-act="rail" aria-label="Show jobs" aria-controls="rail"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+      <span class="topbar-title">Wiki Archive</span>
+    </header>
+    <main id="detail" class="detail" tabindex="-1">
+      <div class="empty-state">
+        <h2>No job selected</h2>
+        <p>Create a new job or select one from the list.</p>
+      </div>
+    </main>
+  </div>
+</div>
+<div id="toasts" role="status" aria-live="polite"></div>
+<script src="/ui/util.js?v={{v}}"></script>
+<script src="/ui/tree.js?v={{v}}"></script>
+<script src="/ui/app.js?v={{v}}"></script>
+</body>
+</html>

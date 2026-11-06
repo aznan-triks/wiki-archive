@@ -139,13 +139,8 @@ def main() -> None:
     # actionable message (Fail Fast) rather than letting wikiteam3 fail
     # with an obscure error.
     print(
-        "ERROR: this site does not appear to be a MediaWiki wiki.\n"
-        f"       Address tested: {base}\n"
-        "       No valid MediaWiki API or index.php page was found.\n"
-        "       Likely cause: the site is a modern web application (SPA)\n"
-        "       or a custom site - despite having a '.wiki' domain name.\n"
-        "       This pipeline can only archive real MediaWiki wikis\n"
-        "       (Fandom, Miraheze, standalone MediaWiki wikis, etc.).",
+        f"No MediaWiki API or index.php page was found at {base}.\n"
+        "       (A modern documentation site is read in 'Website' mode instead.)",
         file=sys.stderr,
     )
     sys.exit(1)

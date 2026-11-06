@@ -1,7 +1,8 @@
 # Wiki Archive → NotebookLM
 
-Archive any MediaWiki site into **one file per category**, in the format(s) of
-your choice: **PDF**, **Markdown**, or **text** — ready for
+Archive any MediaWiki site **or documentation website** (Docusaurus, MkDocs,
+VitePress, Sphinx, …) into **one file per category**, in the format(s) of your
+choice: **PDF**, **Markdown**, or **text** — ready for
 [NotebookLM](https://notebooklm.google.com).
 
 ## What is it?
@@ -22,6 +23,42 @@ pipeline doesn't change — it's always "one file per category".
 
 Result: `data/output/{wiki-hostname}/` contains one file per category and per
 format, ready to import into NotebookLM.
+
+---
+
+## Documentation websites (website mode)
+
+Paste any page of a documentation site, for example
+`https://www.source2.wiki/Basics/working-on-content?game=cs2`. The kind of site is
+detected from the address ("Type of site" lets you force it). In website mode the
+first two steps are replaced; **everything after them is identical** (selection, PDF /
+Markdown / text, file packing).
+
+1. **Download**: starts from the page you gave, adds the sitemap, then follows the
+   links (menus included). Same site only, other languages and tag/search pages are
+   skipped, `robots.txt` is respected, requests are rate-limited (`Delay`) and run in
+   parallel (`Parallel requests`). It is **resumable**: a rerun reads what is already on
+   disk and fetches only what is missing. Dead links (404/410) are remembered and
+   skipped; any other failure stops the run so a rerun can finish the job.
+2. **Extraction**: keeps the main content only (menus, footers, "edit this page" and
+   "last updated" lines removed), flattens tabs, turns admonitions into quotes, keeps code
+   blocks with their language, makes links absolute. Query parameters of your start
+   address (`?game=cs2`) are kept on every page.
+3. **Categories**: taken from the breadcrumb, else the structured breadcrumb data, else
+   the sidebar, else the URL path. Files are numbered in sidebar order, so a merged PDF
+   reads like the site.
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| **Type of site** | auto | `auto`, MediaWiki wiki or documentation website |
+| **Max pages (website)** | 5000 | Discovery stops after this many pages |
+| **Only these paths** | all | Comma-separated patterns on the URL path, e.g. `/docs/*, /guide/*` |
+| **Skip these paths** | – | Same syntax, e.g. `/blog/*` |
+
+Advanced (environment variables): `SITE_RESPECT_ROBOTS` (default `true`), `SITE_TIMEOUT`,
+`SITE_RETRIES`, `SITE_BACKOFF`, `SITE_MAX_BYTES`, `SITE_USER_AGENT`, `SITE_DEFAULT_EXCLUDE`,
+`SITE_ASSET_EXT`, `SITE_MIN_TEXT_CHARS`. Pages that need JavaScript to show their content
+are not supported (the page is read as the server sends it).
 
 ---
 
@@ -109,36 +146,40 @@ When running `python server.py` yourself, the server listens on `127.0.0.1`
 only; set `BIND_HOST=0.0.0.0` (and `PORT`) in the environment to change that.
 
 ### Create a job
-1. Click **"+ New"**
-2. Enter the wiki URL (any page)
-3. Adjust options (optional):
-   - **Namespaces**: `0` = main articles (default), `0,14` adds category pages, `all` = everything.
-     Changing it on an existing job needs a **New full dump**
+1. Click **New job** and paste the address of the wiki or site (any page). A line under
+   the field tells what was detected.
+2. Adjust the options if needed (all under **More options**, except the file count and formats):
+   - **Namespaces** (MediaWiki): `0` = main articles (default), `0,14` adds category pages,
+     `all` = everything. Changing it on an existing job needs a **New full download**
    - **Delay**: seconds between requests (0.5s = respectful)
-   - **Images**: download the wiki's images
-   - **New dump**: wipe everything and start from scratch
-   - **Regenerate rendering**: re-extracts HTML/PDF without re-downloading the dump (~3x faster)
-   - **Skip Internet Archive**: don't look for the wiki on Archive.org
-4. Click **"Create and run"**
+   - **Include images**, **Separate output folder**, **Unique file names** (MediaWiki)
+   - **New full download**: wipe everything and start from scratch
+   - **Re-render output**: rebuild the PDFs without downloading again
+   - **Skip Internet Archive** (MediaWiki)
+   - **Max pages / Only these paths / Skip these paths** (website)
+3. Click **Scan**: it lists the categories. Then pick what to keep and click
+   **Generate selection** (or **Generate all**). **Do everything at once** runs both.
+
+### Choose what to keep
+- Tree of categories (lazy, safe with cycles); a category includes its sub-categories.
+- Each bar shows the category's share of the per-file word limit.
+- A live gauge shows how many files the selection will produce against the NotebookLM
+  limit, the largest file, and the list of files that will be created.
+- **All / None / Collapse / Sort** and a filter box. The selection is remembered.
 
 ### Manage a job
-- **▶ Run**: starts a pending job
-- **⏸ Pause**: suspends the process (and its children) in memory, without killing it
-- **▶ Resume**: continues from where it left off (or restarts if fully stopped)
-- **⏹ Stop**: stops without losing data
-- **↩ Restart**: starts over from the existing dump
-- **🗑 Delete**: fully erases (data + logs)
+- **Pause** suspends the process (and its children) in memory, **Resume** continues,
+  **Stop** stops without losing data.
+- **Delete** (with a few seconds to undo). **Manage** in the sidebar selects several jobs
+  at once, and cleans up stopped or failed ones.
+- **Storage**: shows the disk space used, clears the PDF cache or frees the downloaded data.
 
-### Sidebar
-- Status of each job (colors = state)
-- Relative date ("2h", "yesterday")
-- Click to see details + live logs
-
-### Job details
-- **Configuration**: view/edit parameters before restarting
-- **Progress**: visual bar of the 5 steps
-- **Log**: real-time logs (SSE streaming)
-- **Files**: lists the final PDFs with sizes, path `data/output/{wiki}/`
+### Job page
+- **Stages** (Source, Scan, Choose, Generate, Files) and the status of the job.
+- **Progress** and **Log** (real-time, with warnings-only filter, copy, download).
+- **Generated files**: each file can be downloaded, or all of them as one `.zip`; the
+  folder path can be copied (`data/output/{wiki}/`).
+- **Settings** (gear icon): defaults applied to new jobs. Light / dark / automatic theme.
 
 ---
 
@@ -146,6 +187,7 @@ only; set `BIND_HOST=0.0.0.0` (and `PORT`) in the environment to change that.
 
 | Option | Default | Effect |
 |--------|--------|-------|
+| **Type of site** | auto | MediaWiki wiki or documentation website (see above) |
 | **Namespaces** | `0` | Which namespaces to archive (0=articles, 1=talk, 10=templates, 14=categories, `all`) |
 | **Separate output folder** | ✗ | The job writes to `data/output/<wiki>--<job>` and never overwrites another job's files |
 | **Unique file names** | ✗ | Titles with special characters (`A/B` vs `A:B`) get a short hash so no page is lost; needs a new dump |
@@ -168,6 +210,8 @@ data/
 │   │   ├── dump/
 │   │   │   ├── wiki.xml               # Raw dump (can be very large)
 │   │   │   ├── config.json            # wikiteam3 metadata
+│   │   │   ├── site.json              # Website mode: pages, skipped, failed
+│   │   │   ├── pages/<hash>.html      # Website mode: downloaded pages
 │   │   │   └── ...
 │   │   ├── html/
 │   │   │   ├── SCAR-H.html
@@ -180,6 +224,7 @@ data/
 │   │   ├── flat/
 │   │   │   └── (flat copy for merging)
 │   │   ├── categories.json            # Page → [direct categories]
+│   │   ├── site_hierarchy.json        # Website mode: category tree before propagation
 │   │   ├── category_groups.json       # Category → [pages with hierarchy]
 │   │   ├── category_tree.json         # Category tree (selection UI + packing)
 │   │   ├── page_words.json            # Word weight per page
@@ -267,6 +312,7 @@ http://localhost:8080
 **Persistent volumes:**
 - `./data/` → `/data` — PDF and log storage
 - `./scripts/` → `/scripts:ro` — scripts (read-only, rebuilt on every startup to fix Windows line endings)
+- `./ui/` → `/app/ui:ro` — the web interface (static files)
 
 ---
 
@@ -277,10 +323,13 @@ pip install -r requirements-dev.txt   # adds pytest (runtime deps: requirements.
 python -m pytest
 ```
 
-Tests live in `tests/`, need no network, and only touch a temporary data dir
+Tests live in `tests/`, need no internet (website mode is tested against small local
+sites shaped like Docusaurus and MkDocs), and only touch a temporary data dir
 (`DATA_DIR` env is honored). Tests that exercise optional libraries
 (`requests`, `beautifulsoup4`, `markdownify`, `pikepdf` — all already listed in
-`requirements.txt`) auto-skip when the library is missing.
+`requirements.txt`) auto-skip when the library is missing. The interface tests drive a
+real browser and auto-skip unless `playwright` and Chromium are installed
+(`pip install playwright && playwright install chromium`).
 
 ## Limitations & notes
 
@@ -315,6 +364,7 @@ All code in this project follows these principles. Please respect them for any c
 - **mwparserfromhell**: wikitext parsing
 - **pikepdf**: PDF merging
 - **FastAPI**: web server + API
+- **Beautiful Soup**: page extraction in website mode
 - **MediaWiki API**: page rendering
 
 ---

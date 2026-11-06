@@ -176,9 +176,9 @@ def browser_page(tmp_path):
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(f"http://127.0.0.1:{port}/")
-        page.wait_for_function("typeof allJobs !== 'undefined' && !!allJobs['20261101-000000-test']")
+        page.wait_for_function("typeof S !== 'undefined' && !!S.jobs['20261101-000000-test']")
         page.evaluate("selectJob('20261101-000000-test')")
-        page.wait_for_selector("#tree-body .tree-row, #tree-body .l-dim", state="attached")
+        page.wait_for_selector("#tree-body .tree-row" if tree else "#d-form [data-act=scan]", state="attached")
         return page, errors
 
     yield start
@@ -202,12 +202,12 @@ def test_ui_unchecking_a_subcategory_keeps_the_parents_pages(browser_page):
     page.wait_for_selector('.tree-lbl[title="Rifles"]')
     page.click('.tree-row:has(.tree-lbl[title="Rifles"]) .tree-cb')           # uncheck
     assert "Weapons:partial" in _rows(page)
-    assert page.evaluate("selectedCats()") == [OWN_PREFIX + "Weapons", "Pistols", "Cities"]
-    page.evaluate("treeSelectNone()")
+    assert page.evaluate("Tree.selected()") == [OWN_PREFIX + "Weapons", "Pistols", "Cities"]
+    page.evaluate("Tree.selectNone()")
     page.click('.tree-row:has(.tree-lbl[title="Pistols"]) .tree-cb')
-    assert page.evaluate("selectedCats()") == ["Pistols"], "own pages must not appear unasked"
-    page.evaluate("treeSelectAll()")
-    assert sorted(page.evaluate("selectedCats()")) == sorted(GROUPS)
+    assert page.evaluate("Tree.selected()") == ["Pistols"], "own pages must not appear unasked"
+    page.evaluate("Tree.selectAll()")
+    assert sorted(page.evaluate("Tree.selected()")) == sorted(GROUPS)
     assert errors == []
 
 
@@ -222,13 +222,13 @@ def test_ui_launch_buttons_come_back_after_an_error(browser_page):
     """The launch form was only drawn when the job was opened: a job that failed
     or was stopped while on screen left the user with no button at all."""
     page, errors = browser_page(tree=False)
-    page.evaluate("""() => { const j = allJobs['20261101-000000-test'];
+    page.evaluate("""() => { const j = S.jobs['20261101-000000-test'];
         j.status = 'running'; renderFullDetail(j); }""")
     assert page.locator("#d-form button").count() == 0
     for status in ("error", "stopped"):
-        page.evaluate("(st) => updateDetail({...allJobs['20261101-000000-test'], status: st})", status)
-        assert "Scan the wiki" in page.inner_text("#d-form"), status
-    page.evaluate("() => updateDetail({...allJobs['20261101-000000-test'], status: 'running'})")
+        page.evaluate("(st) => updateDetail({...S.jobs['20261101-000000-test'], status: st})", status)
+        assert page.locator("#d-form [data-act=scan]").count() == 1, status
+    page.evaluate("() => updateDetail({...S.jobs['20261101-000000-test'], status: 'running'})")
     assert page.locator("#d-form button").count() == 0, "form must go away while running"
     assert errors == []
 
@@ -236,6 +236,7 @@ def test_ui_launch_buttons_come_back_after_an_error(browser_page):
 def test_ui_form_exposes_the_new_options(browser_page):
     page, errors = browser_page(tree=False)
     assert page.locator("#f-perjob").count() == 1 and page.locator("#f-unique").count() == 1
+    page.click("#job-form summary")          # the options sit under "More options"
     page.check("#f-perjob")
     params = page.evaluate("collectParams()")
     assert params["output_per_job"] is True and params["unique_names"] is False

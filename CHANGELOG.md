@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-11-04
+
+### Added
+
+**Plain words:**
+Wiki Archive now also reads documentation websites (such as `source2.wiki`, and sites built with Docusaurus, MkDocs, VitePress or Sphinx), not only MediaWiki wikis. Paste any page of the site: its pages are downloaded, sorted into categories following the site's own menus, and turned into the same PDF, Markdown or text files as before. The web interface was rebuilt: it detects the kind of site as you type, shows live how many files your selection will produce, lets you download the files (or all of them as one zip), and has a dark theme and a phone layout.
+
+**Technical:**
+- New website mode, chosen by `source` (`auto`, `mediawiki`, `site`; `auto` falls back to a website when no MediaWiki API answers). Steps 1 and 2 are `site_fetch.py` (sitemap plus link crawl, same site, hreflang language exclusion, `robots.txt`, global rate limit, parallel workers, retries with `Retry-After`, resumable through `dump/site.json`, sticky start-URL query parameters) and `site_extract.py` (main-content cascade for Docusaurus, MkDocs Material, VitePress, Starlight, Sphinx and generic pages; tab flattening; admonitions to quotes; code language kept). `build_site_categories.py` replaces the MediaWiki category step. Category placement uses the breadcrumb, JSON-LD `BreadcrumbList`, sidebar chain, then the URL path.
+- Files are named `NNNN_slug` in sidebar order, so alphabetical order is reading order for packing, export and merged PDFs; changed or removed pages delete their stale PDFs.
+- New options `source`, `site_max_pages`, `site_include`, `site_exclude` (validated for jobs and settings); advanced `SITE_*` environment variables.
+- New endpoints: `GET /api/jobs/{id}/files/{name}`, `GET /api/jobs/{id}/download.zip`, `POST /api/detect` (reads at most `DETECT_MAX_BYTES`). Job metadata exposes `source_kind`.
+- Interface moved from a string inside `server.py` to static files in `ui/` (`index.html`, `styles.css`, `util.js`, `tree.js`, `app.js`; no build step), served with a cache-busting version. Docker image and compose mount `ui/`.
+- Shared modules `scripts/category_tree.py` (hierarchy propagation, used by both modes) and `scripts/page_style.py` (page CSS and wrapper).
+
+### Changed
+
+**Plain words:**
+A job that ends in an error now says so on its page, and Markdown files no longer repeat each page's title twice at the top.
+
+**Technical:**
+- `export_categories.get_article` drops the page's `<h1>` after reading the title (it was repeated by the Markdown heading); code blocks use the language recorded by the extractor (`data-lang`).
+- `detect_wiki.py` failure message no longer assumes a MediaWiki.
+- Interface test hooks renamed (`allJobs` to `S.jobs`, `selectedCats()` to `Tree.selected()`, "Scan the wiki" button text to `[data-act=scan]`); the behaviour assertions are unchanged.
+
 ## [1.1.1] - 2026-11-02
 
 ### Changed

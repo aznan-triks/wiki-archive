@@ -24,6 +24,7 @@ RUN pip install --no-cache-dir \
 
 WORKDIR /app
 COPY server.py /app/server.py
+COPY ui/ /app/ui/
 COPY scripts/ /scripts/
 # Convert Windows -> Unix line endings for all scripts
 RUN dos2unix /scripts/*.py && chmod +x /scripts/*.py

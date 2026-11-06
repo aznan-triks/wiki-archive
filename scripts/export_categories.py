@@ -136,9 +136,14 @@ def _render_txt(title: str, blocks: list[tuple]) -> str:
     return "\n".join(out).strip()
 
 
+def _code_language(pre) -> str:
+    """Language tag of a ```fence``` (site_extract marks it on the <pre>)."""
+    return pre.get("data-lang", "")
+
+
 def _render_md(title: str, body: str) -> str:
     """Converts the cleaned HTML to Markdown via markdownify."""
-    content = _md(body, heading_style="ATX", bullets="-")
+    content = _md(body, heading_style="ATX", bullets="-", code_language_callback=_code_language)
     content = re.sub(r"\n{3,}", "\n\n", content).strip()
     return f"# {title}\n\n{content}"
 
@@ -206,6 +211,9 @@ def main(argv: list[str]) -> int:
                 raw_html = f.read_text(encoding="utf-8")
                 soup  = _ch.clean(raw_html)
                 title = _ch.title_text(soup, stem.replace("_", " "))
+                h1 = soup.find("h1")
+                if h1 is not None:        # the title is written once, by the renderers
+                    h1.decompose()
                 body  = _ch.body_html(soup)
                 _, blocks = _parse_txt(body)
                 cache[stem] = (title, blocks, body)

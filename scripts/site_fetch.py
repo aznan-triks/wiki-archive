@@ -145,7 +145,7 @@ class Crawl:
         self.index_file = dump_dir / "site.json"
         self.include = sc.split_patterns(os.getenv("SITE_INCLUDE", ""))
         self.exclude = sc.split_patterns(os.getenv("SITE_EXCLUDE", ""))
-        self.max_pages = max(1, int(os.getenv("SITE_MAX_PAGES", "5000")))
+        self.max_pages = max(0, int(os.getenv("SITE_MAX_PAGES", "0")))   # 0 = no limit
         self.respect_robots = os.getenv("SITE_RESPECT_ROBOTS", "true").lower() != "false"
         self.prefixes: list[str] = []
         self.pages: dict[str, dict] = {}       # url -> {"file", "final"}
@@ -319,7 +319,7 @@ class Crawl:
         url = self.canon(url)
         if url in self.queued or not self.wanted(url):
             return
-        if len(self.queued) >= self.max_pages:
+        if self.max_pages and len(self.queued) >= self.max_pages:
             self.dropped += 1
             return
         self.queued.add(url)

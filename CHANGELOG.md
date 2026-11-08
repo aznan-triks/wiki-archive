@@ -12,7 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Plain words:**
 One command, `python scripts/verify.py`, now runs every check before a change is called done, and a git hook runs it before each push.
 
+**Plain words:**
+Website downloads no longer stop at 5000 pages: the "Max pages" option now defaults to 0, meaning no limit (type a number to cap it).
+
 **Technical:**
+- `SITE_MAX_PAGES` / `site_max_pages`: 0 is accepted and is the default (was 5000, minimum 1); the interface sends 0 instead of falling back to 5000.
 - `scripts/verify.py` (tests, hard-coded URL search, layer violations) and `scripts/githooks/pre-push` (also requires `gh` logged in as `aznan-triks`; enable with `git config core.hooksPath scripts/githooks`).
 
 ## [1.2.0] - 2026-11-04

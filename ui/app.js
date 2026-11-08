@@ -175,7 +175,7 @@ function buildSettingsPage(s) {
       ${checkbox("s-unique", s.unique_names, "Unique file names", "Needs a new dump")}
     </div></details>
     <details class="adv"><summary>Documentation websites</summary><div class="fields">
-      ${numberField("s-sitemax", "Max pages", s.site_max_pages, 'min="1"', "Discovery stops after this many pages")}
+      ${numberField("s-sitemax", "Max pages", s.site_max_pages, 'min="0"', "0 = no limit; otherwise discovery stops after this many pages")}
     </div></details>
   </section>
 
@@ -219,7 +219,7 @@ async function saveSettings() {
     force:                $("s-force").checked,
     max_pdf:              parseInt($("s-maxpdf").value) || 500,
     workers:              parseInt($("s-workers").value) || 4,
-    site_max_pages:       parseInt($("s-sitemax").value) || 5000,
+    site_max_pages:       numOr($("s-sitemax").value, 0),
   };
   const r = await api("/api/settings", { method: "PUT", body });
   if (r.error) { showToast(r.error, { type: "err" }); return; }
@@ -265,7 +265,7 @@ function buildForm(job) {
         ${checkbox("f-force", p.force !== false, "Skip Internet Archive")}
       </div></div>
       <div class="only-site" data-kinds="site"><div class="fields">
-        ${numberField("f-sitemax", "Max pages (website)", p.site_max_pages, 'min="1"', "Discovery stops after this many pages")}
+        ${numberField("f-sitemax", "Max pages (website)", p.site_max_pages, 'min="0"', "0 = no limit; otherwise discovery stops after this many pages")}
         ${textField("f-include", "Only these paths (website)", p.site_include, "/docs/*, /guide/*", "Comma-separated; empty means the whole site")}
         ${textField("f-exclude", "Skip these paths (website)", p.site_exclude, "/blog/*", "Tags, search and other languages are skipped already")}
       </div></div>
@@ -337,7 +337,7 @@ function collectParams(base) {
     clean:          $("f-clean")?.checked ?? false,
     rerender:       $("f-rerender")?.checked ?? false,
     force:          $("f-force")?.checked ?? true,
-    site_max_pages: parseInt($("f-sitemax")?.value) || base.site_max_pages || 5000,
+    site_max_pages: numOr($("f-sitemax")?.value, base.site_max_pages ?? 0),
     site_include:   $("f-include")?.value?.trim() ?? base.site_include ?? "",
     site_exclude:   $("f-exclude")?.value?.trim() ?? base.site_exclude ?? "",
     export_formats: collectFormats(),

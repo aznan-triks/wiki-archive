@@ -104,7 +104,7 @@ def test_detect_tells_a_website_from_a_mediawiki_and_survives_bad_input(api):
         assert requests.post(base + "/api/detect", json={"url": bad}).status_code == 400, bad
 
 
-@pytest.mark.parametrize("field,value", [("source", "ftp"), ("site_max_pages", 0), ("site_max_pages", "many"),
+@pytest.mark.parametrize("field,value", [("source", "ftp"), ("site_max_pages", -1), ("site_max_pages", "many"),
                                           ("site_include", ["/docs/*"]), ("site_exclude", "x" * 2001)])
 def test_new_options_are_validated_for_jobs_and_settings(api, field, value):
     base, _ = api

@@ -51,7 +51,7 @@ Markdown / text, file packing).
 | Option | Default | Effect |
 |--------|---------|--------|
 | **Type of site** | auto | `auto`, MediaWiki wiki or documentation website |
-| **Max pages (website)** | 5000 | Discovery stops after this many pages |
+| **Max pages (website)** | 0 (no limit) | Discovery stops after this many pages; 0 means no limit |
 | **Only these paths** | all | Comma-separated patterns on the URL path, e.g. `/docs/*, /guide/*` |
 | **Skip these paths** | – | Same syntax, e.g. `/blog/*` |
 

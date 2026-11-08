@@ -123,6 +123,10 @@ def test_include_exclude_and_page_limit(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setenv("SITE_INCLUDE", "")
     monkeypatch.setenv("SITE_EXCLUDE", "")
+    monkeypatch.delenv("SITE_MAX_PAGES", raising=False)
+    with serve(docusaurus_routes) as (base, _):
+        crawl(tmp_path / "nolimit", f"{base}/")
+    assert "Page limit reached" not in capsys.readouterr().out
     monkeypatch.setenv("SITE_MAX_PAGES", "3")
     with serve(docusaurus_routes) as (base, _):
         code, dump = crawl(tmp_path / "limit", f"{base}/")

@@ -83,7 +83,7 @@ DEFAULTS = {
     "output_per_job":       False,   # True: data/output/<wiki>--<job> instead of one folder per wiki
     "unique_names":         False,   # True: titles with special characters get a hash (no collisions)
     "source":               "auto",  # auto | mediawiki | site (documentation website)
-    "site_max_pages":       5000,    # website mode: stop discovering after this many pages
+    "site_max_pages":       0,       # website mode: stop discovering after this many pages (0 = no limit)
     "site_include":         "",      # website mode: only URL paths matching these patterns (e.g. /docs/*)
     "site_exclude":         "",      # website mode: skip URL paths matching these patterns
 }
@@ -658,7 +658,7 @@ async def list_jobs():
 
 
 _INT_PARAMS = {"max_pdf": 1, "workers": 1, "max_files": 0, "notebooklm_max_words": 0, "cat_workers": 1,
-               "site_max_pages": 1}
+               "site_max_pages": 0}
 _TEXT_PARAMS = ("site_include", "site_exclude")
 _BOOL_PARAMS = {k for k, v in DEFAULTS.items() if isinstance(v, bool)}
 

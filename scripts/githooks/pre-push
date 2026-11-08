@@ -1,0 +1,6 @@
+#!/bin/sh
+# Refuse the push unless the project checks pass and gh is logged in as the project account.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+gh auth status 2>&1 | grep -q "Active account: true" && gh auth status 2>&1 | grep -q "aznan-triks" \
+  || { echo "pre-push: gh auth status is not aznan-triks"; exit 1; }
+python scripts/verify.py || { echo "pre-push: verify failed"; exit 1; }

@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+**Plain words:**
+One command, `python scripts/verify.py`, now runs every check before a change is called done, and a git hook runs it before each push.
+
+**Technical:**
+- `scripts/verify.py` (tests, hard-coded URL search, layer violations) and `scripts/githooks/pre-push` (also requires `gh` logged in as `aznan-triks`; enable with `git config core.hooksPath scripts/githooks`).
+
 ## [1.2.0] - 2026-11-04
 
 ### Added

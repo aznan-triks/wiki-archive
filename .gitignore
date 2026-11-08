@@ -43,3 +43,7 @@ CONTEXT_reference.md
 NEXT_SESSION.md
 DECISIONS.md
 .claude-archives/
+
+# Claude Code entry and local config (private)
+CLAUDE.md
+.claude/

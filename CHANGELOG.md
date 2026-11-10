@@ -19,6 +19,12 @@ Website downloads no longer stop at 5000 pages: the "Max pages" option now defau
 - `SITE_MAX_PAGES` / `site_max_pages`: 0 is accepted and is the default (was 5000, minimum 1); the interface sends 0 instead of falling back to 5000.
 - `scripts/verify.py` (tests, hard-coded URL search, layer violations) and `scripts/githooks/pre-push` (also requires `gh` logged in as `aznan-triks`; enable with `git config core.hooksPath scripts/githooks`).
 
+**Plain words:**
+A safety guard for AI coding sessions now refuses to read the `.env` secrets file, skip git hooks, force-push or run `git reset --hard`. It only takes effect once its hook is added to the local Claude Code settings.
+
+**Technical:**
+- `scripts/guard.py`: PreToolUse hook script (exit 2 = refused; a guard error allows the call and exits 1). Self-test: `python scripts/guard.py --selftest`, also run by `tests/test_guard.py`.
+
 ## [1.2.0] - 2026-11-04
 
 ### Added
